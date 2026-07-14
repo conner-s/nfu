@@ -1,0 +1,55 @@
+# Woodpecker CI for nfu — a Go + Nix flake.
+#
+# Two lanes, both driven through the flake so the toolchain is pinned by
+# nixpkgs, not by a floating CI image:
+#
+#   flake-check   nix flake check → builds checks.<system>.nfu, whose
+#                 buildGoModule checkPhase runs `go test ./...`. nfu's unit
+#                 tests are pure (they parse fixture flake.lock JSON and format
+#                 output), so this lane needs no live nix inside the build.
+#   quality       gofmt + go vet + `go test ./...` in the dev shell.
+#
+# House style mirrors npk / pla50smoid/nix-pkgs: pinned nix image, a shared
+# flake-enable snippet, push/PR/manual on main.
+
+when:
+  - event: push
+    branch: main
+  - event: pull_request
+  - event: manual
+    branch: main
+
+variables:
+  # Pin the Nix image so CI is reproducible; bump deliberately, not via :latest.
+  - &nix_image nixos/nix:2.24.9
+  - &enable_flakes |
+      mkdir -p /etc/nix
+      printf 'experimental-features = nix-command flakes\naccept-flake-config = true\n' >> /etc/nix/nix.conf
+      # If a k8s node rejects user namespaces (sandbox/clone error on a build),
+      # uncomment the next line:
+      # echo 'sandbox = false' >> /etc/nix/nix.conf
+
+steps:
+  # ── Integration lane: real-nix flake check (builds the package + runs the
+  #    suite via buildGoModule's checkPhase, validates every flake output). ──
+  flake-check:
+    image: *nix_image
+    commands:
+      - *enable_flakes
+      - nix flake check --print-build-logs --show-trace
+
+  # ── Quality lane: format, vet, and the test suite in the dev shell. ──
+  quality:
+    image: *nix_image
+    commands:
+      - *enable_flakes
+      - |
+        nix develop --command bash -c '
+          set -e
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "gofmt needed on:"; echo "$unformatted"; exit 1
+          fi
+          go vet ./...
+          go test ./...
+        '

@@ -1,0 +1,13 @@
+# Go build artifacts
+/nfu
+/dist/
+*.test
+*.out
+
+# Editor/OS
+.DS_Store
+*.swp
+
+# Local scratch
+/result
+/result-*

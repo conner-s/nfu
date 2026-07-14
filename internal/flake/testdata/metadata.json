@@ -1,0 +1,89 @@
+{
+  "description": "test flake",
+  "locks": {
+    "root": "root",
+    "version": 7,
+    "nodes": {
+      "root": {
+        "inputs": {
+          "nixpkgs": "nixpkgs",
+          "totality": "totality",
+          "hmc": "hmc",
+          "mirror": ["nixpkgs"]
+        }
+      },
+      "nixpkgs": {
+        "locked": {
+          "type": "github",
+          "owner": "nixos",
+          "repo": "nixpkgs",
+          "ref": "nixos-26.05",
+          "rev": "1111111111111111111111111111111111111111",
+          "narHash": "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+          "lastModified": 1784000000
+        },
+        "original": {
+          "type": "github",
+          "owner": "nixos",
+          "repo": "nixpkgs",
+          "ref": "nixos-26.05"
+        }
+      },
+      "nixpkgs_2": {
+        "locked": {
+          "type": "github",
+          "owner": "nixos",
+          "repo": "nixpkgs",
+          "ref": "nixpkgs-unstable",
+          "rev": "2222222222222222222222222222222222222222",
+          "narHash": "sha256-BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB=",
+          "lastModified": 1784010000
+        },
+        "original": {
+          "type": "github",
+          "owner": "nixos",
+          "repo": "nixpkgs",
+          "ref": "nixpkgs-unstable"
+        }
+      },
+      "totality": {
+        "inputs": {
+          "nixpkgs": "nixpkgs_2"
+        },
+        "locked": {
+          "type": "git",
+          "url": "ssh://git@example.com/connerlab/totality.git",
+          "ref": "main",
+          "rev": "6bdb38aa582f3ab09bb61a9fddd4cec7e069eee2",
+          "narHash": "sha256-AkwK4si8cpuXFCrE082x3WhqkIZaUpu2uO/AFiCW0sU=",
+          "lastModified": 1784048328,
+          "revCount": 11
+        },
+        "original": {
+          "type": "git",
+          "url": "ssh://git@example.com/connerlab/totality.git",
+          "ref": "main"
+        }
+      },
+      "hmc": {
+        "inputs": {
+          "nixpkgs": ["nixpkgs"],
+          "pla50smoid": ["pla50smoid"]
+        },
+        "locked": {
+          "type": "git",
+          "url": "ssh://git@example.com/connerlab/home-manager.git",
+          "ref": "main",
+          "rev": "abcabcabcabcabcabcabcabcabcabcabcabcabca",
+          "narHash": "sha256-CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC=",
+          "lastModified": 1783900000
+        },
+        "original": {
+          "type": "git",
+          "url": "ssh://git@example.com/connerlab/home-manager.git",
+          "ref": "main"
+        }
+      }
+    }
+  }
+}

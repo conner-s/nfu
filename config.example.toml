@@ -1,0 +1,14 @@
+# nfu config — copy to ~/.config/nfu/config.toml and adjust.
+#
+# The only thing nfu truly needs is where your flake lives. Point it there once
+# and `nfu totality` (or any input name) updates that input from anywhere.
+
+# The flake to operate on: the directory containing flake.nix / flake.lock.
+# A leading ~ is expanded. Overridable per-run with --flake / $NFU_FLAKE.
+flakeRoot = "~/Projects/nixos-config"
+
+# When true, a successful update also `git commit`s the resulting flake.lock
+# (only that file, never a push) with a generated message like
+# "flake.lock: update totality (6bdb38a → a1b2c3d)".
+# Override per-run with --commit / --no-commit. Default: false.
+commit = false

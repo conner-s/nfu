@@ -102,6 +102,31 @@ func TestQuitCancels(t *testing.T) {
 	}
 }
 
+func TestCommitToggle(t *testing.T) {
+	// Invoked without -c: the switch starts off and `c` flips it on/off.
+	m := pickingModel()
+	if m.commit {
+		t.Fatal("commit should start off when not invoked with -c")
+	}
+	m = step(m, key("c"))
+	if !m.commit {
+		t.Error("c should enable commit")
+	}
+	m = step(m, key("c"))
+	if m.commit {
+		t.Error("second c should disable commit")
+	}
+
+	// Invoked with -c (or a commit-by-default config): the switch reflects that
+	// starting state, and `c` can still turn it off for this run.
+	on := pickingModel()
+	on.commit = true
+	on = step(on, key("c"))
+	if on.commit {
+		t.Error("c should turn an invoked-on commit off")
+	}
+}
+
 func TestCursorClamps(t *testing.T) {
 	m := pickingModel()
 	m = step(m, key("up")) // already at 0

@@ -192,6 +192,11 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case "a":
 		m.toggleAll()
+	case "c":
+		// Flip whether a successful update also commits flake.lock. Starts from
+		// the invoked state (-c / --no-commit / config default) and overrides it
+		// for this run only.
+		m.commit = !m.commit
 	case "enter", "u":
 		names := m.selectedNames()
 		if len(names) == 0 {

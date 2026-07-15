@@ -84,10 +84,23 @@ func (m model) pickView() string {
 
 	n := len(m.selectedNames())
 	b.WriteString("\n")
+	b.WriteString(m.commitToggle())
+	b.WriteString("\n")
 	b.WriteString(s.Help.Render(fmt.Sprintf(
-		"↑/↓ move · space select · a all · enter update (%d) · q quit", n)))
+		"↑/↓ move · space select · a all · c commit · enter update (%d) · q quit", n)))
 	b.WriteString("\n")
 	return b.String()
+}
+
+// commitToggle renders the commit switch: whether a successful update will also
+// git-commit flake.lock. It mirrors the row checkbox idiom ([x]/[ ]) so the
+// toggle reads at a glance, and reflects the invoked state until `c` flips it.
+func (m model) commitToggle() string {
+	s := m.styles
+	if m.commit {
+		return "  " + s.Good.Render("[x] commit flake.lock")
+	}
+	return "  " + s.Dim.Render("[ ] commit flake.lock")
 }
 
 func (m model) doneView() string {

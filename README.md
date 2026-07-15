@@ -95,9 +95,12 @@ update still succeeds and the commit is skipped with a warning.
 
 Run `nfu` with no arguments for an interactive picker (Bubble Tea): every input
 with its type, short pin, and age; `space` to toggle, `a` for all, `enter` to
-update the selection in one lock write, `q` to quit. `follows` aliases are shown
-but not selectable (updating them means updating what they follow). Piped or
-non-interactive, bare `nfu` falls back to the read-only `nfu list`.
+update the selection in one lock write, `q` to quit. `c` toggles the commit
+switch — whether a successful update also commits flake.lock — starting from the
+invoked state (`-c` / `--no-commit` / the config default) and overriding it for
+that run. `follows` aliases are shown but not selectable (updating them means
+updating what they follow). Piped or non-interactive, bare `nfu` falls back to
+the read-only `nfu list`.
 
 ## List
 

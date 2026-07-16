@@ -8,6 +8,7 @@ import (
 	"errors"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
@@ -39,6 +40,15 @@ type updateFinishedMsg struct {
 	warn      string
 }
 
+// upstreamMsg carries the result of an upstream probe (the `f`/`F` hotkeys):
+// inputs is the whole probe lock, names is the subset that was requested (and
+// marked "checking"). A failed probe fills err and leaves inputs nil.
+type upstreamMsg struct {
+	names  []string
+	inputs []flake.Input
+	err    error
+}
+
 type model struct {
 	ctx     context.Context
 	cancel  context.CancelFunc
@@ -53,6 +63,14 @@ type model struct {
 	cursor   int
 	selected map[int]bool
 	updating []string
+
+	// Upstream-probe state (the `f`/`F` hotkeys). checking holds inputs with an
+	// in-flight probe (drives the per-row spinner); upstream holds the resolved
+	// upstream pin by input name; upstreamErr holds a probe's error by name. All
+	// keyed by input name so a re-fetch simply overwrites.
+	checking    map[string]bool
+	upstream    map[string]flake.Input
+	upstreamErr map[string]string
 
 	results   []flake.UpdateResult
 	committed bool
@@ -74,15 +92,18 @@ func Run(ctx context.Context, client *flake.Client, commit bool) error {
 	defer cancel()
 	sp := spinner.New(spinner.WithSpinner(spinner.Dot))
 	m := model{
-		ctx:      cctx,
-		cancel:   cancel,
-		client:   client,
-		commit:   commit,
-		styles:   ui.NewStyles(),
-		spinner:  sp,
-		now:      time.Now().Unix(),
-		state:    stateLoading,
-		selected: map[int]bool{},
+		ctx:         cctx,
+		cancel:      cancel,
+		client:      client,
+		commit:      commit,
+		styles:      ui.NewStyles(),
+		spinner:     sp,
+		now:         time.Now().Unix(),
+		state:       stateLoading,
+		selected:    map[int]bool{},
+		checking:    map[string]bool{},
+		upstream:    map[string]flake.Input{},
+		upstreamErr: map[string]string{},
 	}
 	final, err := tea.NewProgram(m, tea.WithContext(cctx)).Run()
 	if err != nil && !errors.Is(err, tea.ErrProgramKilled) && !errors.Is(err, tea.ErrInterrupted) {
@@ -121,6 +142,18 @@ func (m model) doUpdate(names []string) tea.Cmd {
 	}
 }
 
+// fetchUpstream probes upstream in the background. callNames is passed straight
+// to nix (nil = re-lock every input in one call, for `F`); markNames is the set
+// the picker marked "checking" and will merge from the result. They differ only
+// for `F`, where one whole-flake nix call answers for every selectable name.
+func (m model) fetchUpstream(callNames, markNames []string) tea.Cmd {
+	client, ctx := m.client, m.ctx
+	return func() tea.Msg {
+		inputs, err := client.Upstream(ctx, callNames...)
+		return upstreamMsg{names: markNames, inputs: inputs, err: err}
+	}
+}
+
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case inputsLoadedMsg:
@@ -150,8 +183,33 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.state = stateDone
 		return m, tea.Quit
 
+	case upstreamMsg:
+		// A probe just resolved: re-anchor now so RelAge's second-precision reads
+		// true against the moment the result landed, then clear the checked names.
+		m.now = time.Now().Unix()
+		for _, n := range msg.names {
+			delete(m.checking, n)
+		}
+		if msg.err != nil {
+			e := shortErr(msg.err)
+			for _, n := range msg.names {
+				m.upstreamErr[n] = e
+			}
+			return m, nil
+		}
+		byName := indexInputs(msg.inputs)
+		for _, n := range msg.names {
+			if up, ok := byName[n]; ok {
+				m.upstream[n] = up
+				delete(m.upstreamErr, n)
+			}
+		}
+		return m, nil
+
 	case spinner.TickMsg:
-		if m.state == stateLoading || m.state == stateUpdating {
+		// Keep the spinner alive while loading, updating, or any upstream probe is
+		// in flight (the per-row "checking…" indicator).
+		if m.state == stateLoading || m.state == stateUpdating || len(m.checking) > 0 {
 			var cmd tea.Cmd
 			m.spinner, cmd = m.spinner.Update(msg)
 			return m, cmd
@@ -192,6 +250,12 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case "a":
 		m.toggleAll()
+	case "f":
+		// Probe upstream for the hovered input only.
+		return m.startFetch(false)
+	case "F":
+		// Probe upstream for every real input in one nix call.
+		return m.startFetch(true)
 	case "c":
 		// Flip whether a successful update also commits flake.lock. Starts from
 		// the invoked state (-c / --no-commit / config default) and overrides it
@@ -209,6 +273,48 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(m.spinner.Tick, m.doUpdate(names))
 	}
 	return m, nil
+}
+
+// startFetch kicks a background upstream probe. `f` (all==false) checks just the
+// hovered input; `F` (all==true) re-locks every real input in one nix call. The
+// picker stays live — checked rows show a spinner until their result lands. Names
+// already in flight are not re-fetched, and the spinner tick loop is started only
+// when one wasn't already running (a probe of any kind keeps it alive).
+func (m model) startFetch(all bool) (tea.Model, tea.Cmd) {
+	wasChecking := len(m.checking) > 0
+	var callNames, markNames []string
+	if all {
+		markNames = m.selectableNames()
+		// callNames stays nil: nix re-locks the whole flake in a single call.
+	} else {
+		if m.cursor >= len(m.inputs) {
+			return m, nil
+		}
+		in := m.inputs[m.cursor]
+		if in.Follows {
+			// A `follows` alias has no independent lock entry to probe.
+			return m, nil
+		}
+		markNames = []string{in.Name}
+		callNames = markNames
+	}
+
+	var fresh []string
+	for _, n := range markNames {
+		if !m.checking[n] {
+			m.checking[n] = true
+			fresh = append(fresh, n)
+		}
+	}
+	if len(fresh) == 0 {
+		return m, nil // everything requested is already being checked
+	}
+
+	cmds := []tea.Cmd{m.fetchUpstream(callNames, fresh)}
+	if !wasChecking {
+		cmds = append(cmds, m.spinner.Tick)
+	}
+	return m, tea.Batch(cmds...)
 }
 
 func (m *model) toggleAll() {
@@ -242,6 +348,41 @@ func (m model) selectedNames() []string {
 		}
 	}
 	return names
+}
+
+// selectableNames returns every real (non-follows) input name, the set a `F`
+// whole-flake probe answers for.
+func (m model) selectableNames() []string {
+	var names []string
+	for _, in := range m.inputs {
+		if !in.Follows {
+			names = append(names, in.Name)
+		}
+	}
+	return names
+}
+
+func indexInputs(inputs []flake.Input) map[string]flake.Input {
+	byName := make(map[string]flake.Input, len(inputs))
+	for _, in := range inputs {
+		byName[in.Name] = in
+	}
+	return byName
+}
+
+// shortErr condenses a probe error to a single trimmed, length-capped line for
+// an inline row marker — the full multi-line nix stderr would overflow the table.
+func shortErr(err error) string {
+	s := err.Error()
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		s = s[:i]
+	}
+	s = strings.TrimSpace(s)
+	const maxLen = 64
+	if utf8.RuneCountInString(s) > maxLen {
+		s = string([]rune(s)[:maxLen-1]) + "…"
+	}
+	return s
 }
 
 func firstSelectable(inputs []flake.Input) int {

@@ -102,6 +102,20 @@ that run. `follows` aliases are shown but not selectable (updating them means
 updating what they follow). Piped or non-interactive, bare `nfu` falls back to
 the read-only `nfu list`.
 
+**Peek upstream without updating.** `f` probes the hovered input against its
+upstream and appends the diff to that row — the new short rev with its age and
+absolute timestamp (`→ 35d3407  2 hours ago (2026-07-15 11:37)`), or `• up to
+date` if the lock already holds the tip. `F` probes every input in one pass. The
+probe never writes your `flake.lock`: it re-locks into a throwaway file (`nix
+flake update --output-lock-file`), so it shows exactly what a real update would
+land. It runs in the background — the picker stays live and each checked row
+spins until its answer arrives — so you can keep navigating or start the update.
+Because it is a real lock, a moved input is fetched to hash it (a moved `nixpkgs`
+is a full source download), which also warms nix's cache for the update that
+follows; `F` across a big flake can therefore take a while. Probing is read-only
+and orthogonal to selection: press `space` on a row after seeing its diff to
+queue it for the actual update.
+
 ## List
 
 ```

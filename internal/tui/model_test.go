@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"errors"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -8,6 +9,8 @@ import (
 	"github.com/conner-s/nfu/internal/flake"
 	"github.com/conner-s/nfu/internal/ui"
 )
+
+var errTestProbe = errors.New("upstream probe failed: ssh: connect timeout")
 
 func pickingModel() model {
 	return model{
@@ -19,7 +22,10 @@ func pickingModel() model {
 			{Name: "totality", Rev: "bbb"},
 			{Name: "mirror", Follows: true},
 		},
-		selected: map[int]bool{},
+		selected:    map[int]bool{},
+		checking:    map[string]bool{},
+		upstream:    map[string]flake.Input{},
+		upstreamErr: map[string]string{},
 	}
 }
 
@@ -138,6 +144,81 @@ func TestCursorClamps(t *testing.T) {
 	}
 	if m.cursor != len(m.inputs)-1 {
 		t.Errorf("cursor down past end = %d, want %d", m.cursor, len(m.inputs)-1)
+	}
+}
+
+func TestFetchHoveredFlow(t *testing.T) {
+	m := pickingModel() // cursor 0 = nixpkgs (rev "aaa")
+	next, cmd := m.Update(key("f"))
+	m = next.(model)
+	if !m.checking["nixpkgs"] {
+		t.Fatal("f should mark the hovered input as checking")
+	}
+	if cmd == nil {
+		t.Fatal("f should return a fetch command")
+	}
+	// A result lands with a moved pin.
+	m = step(m, upstreamMsg{
+		names:  []string{"nixpkgs"},
+		inputs: []flake.Input{{Name: "nixpkgs", Rev: "zzz", LastModified: 1784100000}},
+	})
+	if m.checking["nixpkgs"] {
+		t.Error("checking should clear once the result arrives")
+	}
+	up, ok := m.upstream["nixpkgs"]
+	if !ok || up.Rev != "zzz" {
+		t.Errorf("upstream pin not recorded: %+v (ok=%v)", up, ok)
+	}
+	// Only the requested name is recorded, not siblings.
+	if _, ok := m.upstream["totality"]; ok {
+		t.Error("f on nixpkgs must not record totality's upstream")
+	}
+}
+
+func TestFetchOnFollowsIsNoop(t *testing.T) {
+	m := pickingModel()
+	m.cursor = 2 // the follows alias 'mirror'
+	next, cmd := m.Update(key("f"))
+	m = next.(model)
+	if len(m.checking) != 0 {
+		t.Errorf("f on a follows alias should be a no-op, got checking=%v", m.checking)
+	}
+	if cmd != nil {
+		t.Error("f on a follows alias should not start a fetch")
+	}
+}
+
+func TestFetchAllMarksSelectable(t *testing.T) {
+	m := pickingModel()
+	next, _ := m.Update(key("F"))
+	m = next.(model)
+	if !m.checking["nixpkgs"] || !m.checking["totality"] {
+		t.Errorf("F should mark all real inputs checking, got %v", m.checking)
+	}
+	if m.checking["mirror"] {
+		t.Error("F must not check a follows alias")
+	}
+}
+
+func TestFetchErrorRecorded(t *testing.T) {
+	m := pickingModel()
+	m = step(m, key("f")) // marks nixpkgs checking
+	m = step(m, upstreamMsg{names: []string{"nixpkgs"}, err: errTestProbe})
+	if m.checking["nixpkgs"] {
+		t.Error("checking should clear even on error")
+	}
+	if m.upstreamErr["nixpkgs"] == "" {
+		t.Error("a probe error should be recorded for the row")
+	}
+}
+
+func TestFetchDedupesInFlight(t *testing.T) {
+	m := pickingModel()
+	m = step(m, key("f")) // nixpkgs now checking
+	next, cmd := m.Update(key("f"))
+	m = next.(model)
+	if cmd != nil {
+		t.Error("f on an already-in-flight input should not start a second fetch")
 	}
 }
 

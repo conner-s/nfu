@@ -29,7 +29,10 @@ func TestRelAge(t *testing.T) {
 	}{
 		{0, "—"},
 		{now, "just now"},
-		{now - 10, "just now"},
+		{now - 1, "1 second ago"},
+		{now - 10, "10 seconds ago"},
+		{now - 44, "44 seconds ago"},
+		{now - 90, "1 minute ago"},
 		{now - 3600, "1 hour ago"},
 		{now - 2*24*3600, "2 days ago"},
 		{now + 5, "just now"}, // future clamps to just now
@@ -38,6 +41,18 @@ func TestRelAge(t *testing.T) {
 		if got := RelAge(c.unix, now); got != c.want {
 			t.Errorf("RelAge(%d, %d) = %q, want %q", c.unix, now, got, c.want)
 		}
+	}
+}
+
+func TestAbsTime(t *testing.T) {
+	if got := AbsTime(0); got != "—" {
+		t.Errorf("AbsTime(0) = %q, want —", got)
+	}
+	// A real timestamp renders as a "YYYY-MM-DD HH:MM" stamp; assert the shape
+	// (exact value is local-timezone dependent, so don't pin the clock).
+	got := AbsTime(1_784_100_000)
+	if len(got) != len("2026-07-15 11:37") || got[4] != '-' || got[7] != '-' || got[10] != ' ' || got[13] != ':' {
+		t.Errorf("AbsTime = %q, want a YYYY-MM-DD HH:MM stamp", got)
 	}
 }
 

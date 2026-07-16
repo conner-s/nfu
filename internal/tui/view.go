@@ -6,6 +6,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/conner-s/nfu/internal/flake"
 	"github.com/conner-s/nfu/internal/ui"
 )
 
@@ -79,6 +80,9 @@ func (m model) pickView() string {
 			s.Value.Render(padRight(ui.ShortPin(in.Pin()), wp)),
 			s.Dim.Render(strings.TrimSpace(ref+"  "+ui.RelAge(in.LastModified, m.now))),
 		)
+		if seg := m.upstreamSegment(in); seg != "" {
+			line = strings.TrimRight(line, " ") + "  " + seg
+		}
 		b.WriteString(strings.TrimRight(line, " ") + "\n")
 	}
 
@@ -87,9 +91,37 @@ func (m model) pickView() string {
 	b.WriteString(m.commitToggle())
 	b.WriteString("\n")
 	b.WriteString(s.Help.Render(fmt.Sprintf(
-		"↑/↓ move · space select · a all · c commit · enter update (%d) · q quit", n)))
+		"↑/↓ move · space select · a all · f upstream · F all-upstream · c commit · enter update (%d) · q quit", n)))
 	b.WriteString("\n")
 	return b.String()
+}
+
+// upstreamSegment renders the trailing upstream-probe column for one row, empty
+// until the input has been checked (`f`/`F`). While a probe is in flight it shows
+// a spinner; on success it shows either "up to date" or the moved pin with both
+// its relative age and absolute timestamp (the diff the hotkeys exist to surface);
+// on failure it shows a short error marker.
+func (m model) upstreamSegment(in flake.Input) string {
+	s := m.styles
+	name := in.Name
+	if m.checking[name] {
+		return m.spinner.View() + s.Dim.Render("checking upstream…")
+	}
+	if e, ok := m.upstreamErr[name]; ok {
+		return s.Warn.Render("! " + e)
+	}
+	up, ok := m.upstream[name]
+	if !ok {
+		return ""
+	}
+	if up.Pin() == in.Pin() {
+		return s.Dim.Render(ui.GlyphUnchanged + " up to date")
+	}
+	return fmt.Sprintf("%s %s  %s",
+		s.Dim.Render(ui.GlyphArrow),
+		s.Good.Render(ui.ShortPin(up.Pin())),
+		s.Dim.Render(ui.RelAge(up.LastModified, m.now)+" ("+ui.AbsTime(up.LastModified)+")"),
+	)
 }
 
 // commitToggle renders the commit switch: whether a successful update will also

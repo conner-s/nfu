@@ -88,6 +88,43 @@ func TestBuildInputs(t *testing.T) {
 	}
 }
 
+func TestParseLockFileMatchesMetadata(t *testing.T) {
+	// A raw flake.lock is exactly metadata's `.locks` sub-object, so parsing one
+	// (as Upstream does with --output-lock-file) must yield the same inputs as
+	// reading it through `nix flake metadata`.
+	md := loadFixture(t)
+	raw, err := json.Marshal(md.Locks) // {root, nodes} — the on-disk lock shape
+	if err != nil {
+		t.Fatalf("marshal locks: %v", err)
+	}
+	got, err := parseLockFile(raw)
+	if err != nil {
+		t.Fatalf("parseLockFile: %v", err)
+	}
+	a, err := got.buildInputs()
+	if err != nil {
+		t.Fatalf("buildInputs(parsed): %v", err)
+	}
+	b, err := md.buildInputs()
+	if err != nil {
+		t.Fatalf("buildInputs(fixture): %v", err)
+	}
+	if len(a) != len(b) {
+		t.Fatalf("parsed lock yielded %d inputs, metadata yielded %d", len(a), len(b))
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			t.Errorf("input %d differs:\n parsed:   %+v\n metadata: %+v", i, a[i], b[i])
+		}
+	}
+}
+
+func TestParseLockFileMalformed(t *testing.T) {
+	if _, err := parseLockFile([]byte("{not json")); err == nil {
+		t.Error("parseLockFile should reject malformed JSON")
+	}
+}
+
 func TestNodeKeyFollows(t *testing.T) {
 	md := loadFixture(t)
 	// Direct string edge.

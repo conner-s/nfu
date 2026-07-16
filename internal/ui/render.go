@@ -3,6 +3,7 @@ package ui
 import (
 	"fmt"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/conner-s/nfu/internal/flake"
@@ -36,9 +37,12 @@ func isHex(s string) bool {
 	return s != ""
 }
 
-// RelAge renders unix seconds relative to now ("just now", "1 hour ago",
+// RelAge renders unix seconds relative to now ("5 seconds ago", "1 hour ago",
 // "5 days ago"), with moment.js-style boundaries so round-ish durations read
-// naturally. A zero timestamp (unknown lastModified) renders as "—".
+// naturally. Sub-minute durations report to the second — an upstream probe can
+// surface a revision only moments old, and "3 seconds ago" is more useful there
+// than a flattened "just now". A zero timestamp (unknown lastModified) renders
+// as "—".
 func RelAge(unix, now int64) string {
 	if unix <= 0 {
 		return "—"
@@ -53,8 +57,10 @@ func RelAge(unix, now int64) string {
 		day  = 24 * hour
 	)
 	switch {
-	case d < 45:
+	case d == 0:
 		return "just now"
+	case d < 45:
+		return plural(d, "second")
 	case d < 45*min:
 		return plural(d/min, "minute")
 	case d < 90*min:
@@ -79,6 +85,16 @@ func plural(n int64, unit string) string {
 		return "1 " + unit + " ago"
 	}
 	return fmt.Sprintf("%d %ss ago", n, unit)
+}
+
+// AbsTime renders unix seconds as a local wall-clock stamp ("2026-07-15 11:37"),
+// the absolute companion to RelAge shown alongside a probed upstream revision so
+// the freshness reads both ways. A zero timestamp renders as "—".
+func AbsTime(unix int64) string {
+	if unix <= 0 {
+		return "—"
+	}
+	return time.Unix(unix, 0).Format("2006-01-02 15:04")
 }
 
 func padRight(s string, n int) string {

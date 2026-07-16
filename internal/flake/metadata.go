@@ -128,6 +128,19 @@ func (c *Client) Metadata(ctx context.Context) (*metadata, error) {
 	return &md, nil
 }
 
+// parseLockFile parses a raw `flake.lock` file (the object nix writes, keyed
+// {nodes, root, version}) into the same metadata shape Metadata yields. A written
+// lock file is exactly metadata's `.locks` sub-object, so the node-resolution and
+// buildInputs logic is shared between "read the current lock" (Metadata) and
+// "read a probe lock" (Upstream via --output-lock-file).
+func parseLockFile(data []byte) (*metadata, error) {
+	var md metadata
+	if err := json.Unmarshal(data, &md.Locks); err != nil {
+		return nil, fmt.Errorf("parse lock file: %w", err)
+	}
+	return &md, nil
+}
+
 // Inputs lists the flake's top-level inputs, name-sorted, each with its locked
 // pin. A `follows` alias is marked (its pin reflects the input it follows).
 func (c *Client) Inputs(ctx context.Context) ([]Input, error) {

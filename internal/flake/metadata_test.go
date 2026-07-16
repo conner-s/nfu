@@ -125,6 +125,51 @@ func TestParseLockFileMalformed(t *testing.T) {
 	}
 }
 
+// TestParseLockFileRealLock parses a genuine on-disk flake.lock (the shape
+// `nix flake update --output-lock-file` writes, which Upstream reads back): a
+// top-level `version` sibling and node-level `original`/`flake` fields the
+// metadata struct does not model. They must be tolerated, and the graph must
+// resolve — including a root-level `follows` edge.
+func TestParseLockFileRealLock(t *testing.T) {
+	data, err := os.ReadFile("testdata/flake.lock")
+	if err != nil {
+		t.Fatalf("read fixture: %v", err)
+	}
+	md, err := parseLockFile(data)
+	if err != nil {
+		t.Fatalf("parseLockFile (real lock with version/original/flake fields): %v", err)
+	}
+	inputs, err := md.buildInputs()
+	if err != nil {
+		t.Fatalf("buildInputs: %v", err)
+	}
+	byName := map[string]Input{}
+	for _, in := range inputs {
+		byName[in.Name] = in
+	}
+
+	np := byName["nixpkgs"]
+	if np.Type != "github" || np.Rev != "8f0500b9660505dc3cb647775fe9a978a74b5283" {
+		t.Errorf("nixpkgs parsed wrong: %+v", np)
+	}
+	if np.URL != "github:nixos/nixpkgs" {
+		t.Errorf("nixpkgs.URL = %q, want synthesized github:nixos/nixpkgs", np.URL)
+	}
+
+	tot := byName["totality"]
+	if tot.Type != "git" || tot.Ref != "main" || tot.LastModified != 1784153891 {
+		t.Errorf("totality parsed wrong: %+v", tot)
+	}
+
+	mir := byName["mirror"]
+	if !mir.Follows {
+		t.Error("mirror should be a follows alias")
+	}
+	if mir.Rev != np.Rev {
+		t.Errorf("mirror should resolve to nixpkgs' rev, got %q", mir.Rev)
+	}
+}
+
 func TestNodeKeyFollows(t *testing.T) {
 	md := loadFixture(t)
 	// Direct string edge.

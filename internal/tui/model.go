@@ -142,15 +142,15 @@ func (m model) doUpdate(names []string) tea.Cmd {
 	}
 }
 
-// fetchUpstream probes upstream in the background. callNames is passed straight
-// to nix (nil = re-lock every input in one call, for `F`); markNames is the set
-// the picker marked "checking" and will merge from the result. They differ only
-// for `F`, where one whole-flake nix call answers for every selectable name.
-func (m model) fetchUpstream(callNames, markNames []string) tea.Cmd {
+// fetchUpstream probes the given inputs in the background and reports the result
+// keyed by those same names. names is both what nix re-locks and what the picker
+// merges, so a probe launched while another is already in flight re-fetches only
+// the not-yet-probed inputs (never a redundant whole-flake re-lock).
+func (m model) fetchUpstream(names []string) tea.Cmd {
 	client, ctx := m.client, m.ctx
 	return func() tea.Msg {
-		inputs, err := client.Upstream(ctx, callNames...)
-		return upstreamMsg{names: markNames, inputs: inputs, err: err}
+		inputs, err := client.Upstream(ctx, names...)
+		return upstreamMsg{names: names, inputs: inputs, err: err}
 	}
 }
 
@@ -276,16 +276,16 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 // startFetch kicks a background upstream probe. `f` (all==false) checks just the
-// hovered input; `F` (all==true) re-locks every real input in one nix call. The
-// picker stays live — checked rows show a spinner until their result lands. Names
-// already in flight are not re-fetched, and the spinner tick loop is started only
-// when one wasn't already running (a probe of any kind keeps it alive).
+// hovered input; `F` (all==true) checks every real input. The picker stays live —
+// checked rows show a spinner until their result lands. Inputs already in flight
+// are not re-fetched (so `F` after an `f` re-locks only the remaining ones), and
+// the spinner tick loop is started only when one wasn't already running (any probe
+// keeps it alive).
 func (m model) startFetch(all bool) (tea.Model, tea.Cmd) {
 	wasChecking := len(m.checking) > 0
-	var callNames, markNames []string
+	var targets []string
 	if all {
-		markNames = m.selectableNames()
-		// callNames stays nil: nix re-locks the whole flake in a single call.
+		targets = m.selectableNames()
 	} else {
 		if m.cursor >= len(m.inputs) {
 			return m, nil
@@ -295,12 +295,11 @@ func (m model) startFetch(all bool) (tea.Model, tea.Cmd) {
 			// A `follows` alias has no independent lock entry to probe.
 			return m, nil
 		}
-		markNames = []string{in.Name}
-		callNames = markNames
+		targets = []string{in.Name}
 	}
 
 	var fresh []string
-	for _, n := range markNames {
+	for _, n := range targets {
 		if !m.checking[n] {
 			m.checking[n] = true
 			fresh = append(fresh, n)
@@ -310,7 +309,7 @@ func (m model) startFetch(all bool) (tea.Model, tea.Cmd) {
 		return m, nil // everything requested is already being checked
 	}
 
-	cmds := []tea.Cmd{m.fetchUpstream(callNames, fresh)}
+	cmds := []tea.Cmd{m.fetchUpstream(fresh)}
 	if !wasChecking {
 		cmds = append(cmds, m.spinner.Tick)
 	}

@@ -40,12 +40,25 @@ func (m model) pickView() string {
 	var b strings.Builder
 	b.WriteString(m.header())
 
-	// Column widths from the plain text.
-	var wn, wt, wp int
-	for _, in := range m.inputs {
+	// Column widths from the plain text. The ref+age "tail" is padded to a shared
+	// width too, but only across rows that carry an upstream segment, so those
+	// segments line up into a column under `F` without padding segment-less rows.
+	var wn, wt, wp, wr int
+	tails := make([]string, len(m.inputs))
+	segs := make([]string, len(m.inputs))
+	for i, in := range m.inputs {
 		wn = maxi(wn, utf8.RuneCountInString(in.Name))
 		wt = maxi(wt, utf8.RuneCountInString(in.Type))
 		wp = maxi(wp, utf8.RuneCountInString(ui.ShortPin(in.Pin())))
+		ref := in.Ref
+		if in.Follows {
+			ref = "follows"
+		}
+		tails[i] = strings.TrimSpace(ref + "  " + ui.RelAge(in.LastModified, m.now))
+		segs[i] = m.upstreamSegment(in)
+		if segs[i] != "" {
+			wr = maxi(wr, utf8.RuneCountInString(tails[i]))
+		}
 	}
 
 	for i, in := range m.inputs {
@@ -70,18 +83,18 @@ func (m model) pickView() string {
 		} else {
 			name = s.Value.Render(name)
 		}
-		ref := in.Ref
-		if in.Follows {
-			ref = "follows"
+		tail := tails[i]
+		if segs[i] != "" {
+			tail = padRight(tail, wr) // align the segment column
 		}
 		line := fmt.Sprintf("%s%s %s  %s  %s  %s",
 			cursor, box, name,
 			s.Label.Render(padRight(in.Type, wt)),
 			s.Value.Render(padRight(ui.ShortPin(in.Pin()), wp)),
-			s.Dim.Render(strings.TrimSpace(ref+"  "+ui.RelAge(in.LastModified, m.now))),
+			s.Dim.Render(tail),
 		)
-		if seg := m.upstreamSegment(in); seg != "" {
-			line = strings.TrimRight(line, " ") + "  " + seg
+		if segs[i] != "" {
+			line += "  " + segs[i]
 		}
 		b.WriteString(strings.TrimRight(line, " ") + "\n")
 	}
@@ -91,7 +104,7 @@ func (m model) pickView() string {
 	b.WriteString(m.commitToggle())
 	b.WriteString("\n")
 	b.WriteString(s.Help.Render(fmt.Sprintf(
-		"↑/↓ move · space select · a all · f upstream · F all-upstream · c commit · enter update (%d) · q quit", n)))
+		"↑/↓ move · space select · a all · f/F upstream · c commit · enter update (%d) · q quit", n)))
 	b.WriteString("\n")
 	return b.String()
 }

@@ -2,8 +2,11 @@ package tui
 
 import (
 	"errors"
+	"strings"
 	"testing"
+	"unicode/utf8"
 
+	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/conner-s/nfu/internal/flake"
@@ -219,6 +222,103 @@ func TestFetchDedupesInFlight(t *testing.T) {
 	m = next.(model)
 	if cmd != nil {
 		t.Error("f on an already-in-flight input should not start a second fetch")
+	}
+}
+
+func TestFetchAllFlow(t *testing.T) {
+	m := pickingModel()
+	m = step(m, key("F"))
+	// A whole-flake result lands carrying both real inputs (plus the follows
+	// alias's resolved pin, which must be ignored).
+	m = step(m, upstreamMsg{
+		names: []string{"nixpkgs", "totality"},
+		inputs: []flake.Input{
+			{Name: "nixpkgs", Rev: "new1"},
+			{Name: "totality", Rev: "new2"},
+			{Name: "mirror", Rev: "new1"},
+		},
+	})
+	if len(m.checking) != 0 {
+		t.Errorf("all checking should clear after the F result, got %v", m.checking)
+	}
+	if m.upstream["nixpkgs"].Rev != "new1" || m.upstream["totality"].Rev != "new2" {
+		t.Errorf("both upstream pins should be recorded from the F result: %+v", m.upstream)
+	}
+	if _, ok := m.upstream["mirror"]; ok {
+		t.Error("a follows alias must not get an upstream entry from F")
+	}
+}
+
+func TestFetchAllWhileHoveredInFlight(t *testing.T) {
+	m := pickingModel()
+	m = step(m, key("f")) // nixpkgs (cursor 0) in flight
+	next, cmd := m.Update(key("F"))
+	m = next.(model)
+	if !m.checking["nixpkgs"] || !m.checking["totality"] {
+		t.Fatalf("F should mark both, got %v", m.checking)
+	}
+	if cmd == nil {
+		t.Fatal("F should still fetch totality (the not-yet-probed input)")
+	}
+	// totality (from F) resolves first; nixpkgs stays checking until its own result.
+	m = step(m, upstreamMsg{names: []string{"totality"}, inputs: []flake.Input{{Name: "totality", Rev: "t"}}})
+	if m.checking["totality"] {
+		t.Error("totality should clear on its result")
+	}
+	if !m.checking["nixpkgs"] {
+		t.Error("nixpkgs should stay checking until its own f result lands")
+	}
+	m = step(m, upstreamMsg{names: []string{"nixpkgs"}, inputs: []flake.Input{{Name: "nixpkgs", Rev: "n"}}})
+	if m.checking["nixpkgs"] {
+		t.Error("nixpkgs should clear after its result")
+	}
+}
+
+func TestSpinnerTicksWhileProbing(t *testing.T) {
+	m := pickingModel()
+	m.spinner = spinner.New(spinner.WithSpinner(spinner.Dot))
+	// A probe in flight keeps the tick loop alive.
+	m.checking["nixpkgs"] = true
+	if _, cmd := m.Update(m.spinner.Tick()); cmd == nil {
+		t.Fatal("spinner should keep ticking while a probe is in flight")
+	}
+	// Once checking drains, the loop stops re-scheduling.
+	delete(m.checking, "nixpkgs")
+	if _, cmd := m.Update(m.spinner.Tick()); cmd != nil {
+		t.Fatal("spinner should stop ticking once no probe is in flight")
+	}
+}
+
+func TestUpstreamMsgReanchorsNow(t *testing.T) {
+	m := pickingModel()
+	m.now = 1 // clearly stale (1970) — a long-running probe must re-anchor it
+	m = step(m, upstreamMsg{names: []string{"nixpkgs"}, inputs: []flake.Input{{Name: "nixpkgs", Rev: "z"}}})
+	if m.now < 1_700_000_000 {
+		t.Errorf("upstreamMsg should re-anchor m.now to ~now, got %d", m.now)
+	}
+}
+
+func TestShortErr(t *testing.T) {
+	// Multi-line collapses to the first line, trimmed (guards row corruption).
+	if got := shortErr(errors.New("  first line \nsecond line")); got != "first line" {
+		t.Errorf("multi-line shortErr = %q, want %q", got, "first line")
+	}
+	// Short single-line returned verbatim.
+	if got := shortErr(errors.New("nope")); got != "nope" {
+		t.Errorf("short shortErr = %q, want %q", got, "nope")
+	}
+	// Long ASCII capped to 64 runes ending in an ellipsis.
+	got := shortErr(errors.New(strings.Repeat("x", 200)))
+	if utf8.RuneCountInString(got) != 64 || !strings.HasSuffix(got, "…") {
+		t.Errorf("capped shortErr = %q (%d runes), want 64 runes ending in …", got, utf8.RuneCountInString(got))
+	}
+	// Multibyte truncation stays valid UTF-8 and rune-counted (not byte-sliced).
+	got = shortErr(errors.New(strings.Repeat("→", 200)))
+	if !utf8.ValidString(got) {
+		t.Errorf("capped multibyte shortErr is not valid UTF-8: %q", got)
+	}
+	if utf8.RuneCountInString(got) != 64 {
+		t.Errorf("capped multibyte shortErr = %d runes, want 64", utf8.RuneCountInString(got))
 	}
 }
 

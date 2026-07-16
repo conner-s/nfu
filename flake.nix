@@ -10,7 +10,7 @@
     in
     {
       packages = forAll (pkgs: {
-        default = self.packages.${pkgs.system}.nfu;
+        default = self.packages.${pkgs.stdenv.hostPlatform.system}.nfu;
 
         nfu = pkgs.buildGoModule {
           pname = "nfu";
@@ -52,7 +52,7 @@
       # failing suite. nfu's unit tests are pure (they parse fixture lock JSON),
       # so this needs no live nix.
       checks = forAll (pkgs: {
-        nfu = self.packages.${pkgs.system}.nfu;
+        nfu = self.packages.${pkgs.stdenv.hostPlatform.system}.nfu;
       });
 
       devShells = forAll (pkgs: {

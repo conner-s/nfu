@@ -91,7 +91,7 @@ in
 
     package = lib.mkOption {
       type = lib.types.package;
-      default = self.packages.${pkgs.system}.nfu;
+      default = self.packages.${pkgs.stdenv.hostPlatform.system}.nfu;
       defaultText = lib.literalExpression "nfu.packages.\${system}.nfu";
       description = "The nfu package to install.";
     };

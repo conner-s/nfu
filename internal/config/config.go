@@ -27,10 +27,72 @@ type Config struct {
 	// never a push. The --commit / --no-commit flags override it per run.
 	Commit bool `toml:"commit"`
 
+	// ProjectsDir is where the per-file project definitions live. A leading ~ is
+	// expanded; when unset it defaults to the "projects" directory beside this
+	// config file (see ProjectsDir). Point it at a git-tracked directory to
+	// version-control your projects.
+	ProjectsDir string `toml:"projectsDir"`
+
+	// Hosts is the declarative deploy-host catalog: a deploy target's name mapped
+	// to its deploy-rs settings (extra `deployArgs`, an informational hostname).
+	// Projects reference hosts by name; the mutable index and inline project defs
+	// can extend it (see internal/project).
+	Hosts map[string]Host `toml:"hosts"`
+
+	// Projects are declarative pipeline definitions keyed by name. Most projects
+	// live as per-file entries under ProjectsDir; this map is the freeform escape
+	// hatch for declaring them inline in config.toml.
+	Projects map[string]Project `toml:"projects"`
+
 	// path is where this config was loaded from (for error messages); empty if
 	// the config came from flags/env alone.
 	path string
 }
+
+// Host is one deploy target's deploy-rs configuration.
+type Host struct {
+	// Hostname is informational (documentation); deploy-rs takes the address
+	// from the flake's deploy.nodes.<name>. It is kept so a project file/index
+	// records where a host lives.
+	Hostname string `toml:"hostname,omitempty"`
+
+	// DeployArgs are extra arguments passed to `deploy` before the `.#<host>`
+	// installable, e.g. ["--magic-rollback", "false"] for a host whose
+	// post-activation canary never lands.
+	DeployArgs []string `toml:"deployArgs,omitempty"`
+}
+
+// Project is one update→switch→deploy pipeline definition.
+type Project struct {
+	// Inputs are the flake inputs this project updates (at least one).
+	Inputs []string `toml:"inputs"`
+
+	// Hosts are the deploy targets to activate after the local switch, in order.
+	// Each is a host name resolved through the catalog (Config.Hosts, the index,
+	// or an inline HostDefs entry); an unknown name deploys bare (no extra args).
+	Hosts []string `toml:"hosts,omitempty"`
+
+	// LocalSwitch controls whether a run rebuilds the local host (`nh os switch`).
+	// nil means the default, true; set false for a remote-only project.
+	LocalSwitch *bool `toml:"localSwitch,omitempty"`
+
+	// Description is an optional human note shown in listings.
+	Description string `toml:"description,omitempty"`
+
+	// HostDefs are optional inline host definitions carried by a portable/shared
+	// project file (the `hosts` key is the reference array, so inline defs live
+	// under a distinct `[hostDefs.*]` table). `add` normally writes host defs to
+	// the shared index instead; --print inlines them here for a self-contained
+	// file.
+	HostDefs map[string]Host `toml:"hostDefs,omitempty"`
+
+	// FlakeRoot optionally overrides the flake this project operates on.
+	FlakeRoot string `toml:"flakeRoot,omitempty"`
+}
+
+// SwitchLocal reports whether a run should rebuild the local host. It defaults
+// to true when unset.
+func (p Project) SwitchLocal() bool { return p.LocalSwitch == nil || *p.LocalSwitch }
 
 // DefaultPath returns ~/.config/nfu/config.toml (honoring XDG_CONFIG_HOME).
 func DefaultPath() string {
@@ -75,6 +137,27 @@ func Load(path string) (*Config, error) {
 
 // Path returns where this config was loaded from ("" if none).
 func (c *Config) Path() string { return c.path }
+
+// Dir returns the directory holding this config file — the home for nfu's
+// mutable sibling state (the current-project marker, the projects index, the
+// per-file project store). It falls back to the default config directory when
+// the config came from flags/env alone (no file on disk).
+func (c *Config) Dir() string {
+	if c != nil && c.path != "" {
+		return filepath.Dir(c.path)
+	}
+	return filepath.Dir(DefaultPath())
+}
+
+// ProjectsPath returns the directory holding per-file project definitions:
+// the configured projectsDir (tilde-expanded) when set, else "projects" beside
+// the config file (see Dir).
+func (c *Config) ProjectsPath() string {
+	if c != nil && c.ProjectsDir != "" {
+		return expandTilde(c.ProjectsDir)
+	}
+	return filepath.Join(c.Dir(), "projects")
+}
 
 // Resolve picks the flake root using, in order: an explicit override (the
 // --flake flag), the config's flakeRoot, then the $NFU_FLAKE / $FLAKE env vars

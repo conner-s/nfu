@@ -20,7 +20,7 @@
           # Hash of the vendored Go dependencies. To regenerate after changing
           # go.mod/go.sum: set this to lib.fakeHash, run `nix build .#nfu`, and
           # paste the `got:` hash it reports.
-          vendorHash = "sha256-SWhvYkKB74zJee+DGy/62xbWk1K/1p+Kz6g/CRw6y7E=";
+          vendorHash = "sha256-aan6fL3HrFowlBLonWif4eQhKwgIpuQBOwo93G7kZmo=";
 
           nativeBuildInputs = [ pkgs.makeWrapper ];
 

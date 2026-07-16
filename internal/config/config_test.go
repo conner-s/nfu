@@ -37,6 +37,75 @@ func TestLoad(t *testing.T) {
 	}
 }
 
+func TestLoadHostsAndProjects(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	toml := `flakeRoot = "/a/b"
+
+[hosts.Fabricator]
+hostname   = "192.168.4.10"
+deployArgs = ["--magic-rollback", "false"]
+
+[projects.totality]
+inputs      = ["totality"]
+hosts       = ["Fabricator"]
+localSwitch = false
+`
+	if err := os.WriteFile(path, []byte(toml), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	h, ok := cfg.Hosts["Fabricator"]
+	if !ok || h.Hostname != "192.168.4.10" || len(h.DeployArgs) != 2 || h.DeployArgs[0] != "--magic-rollback" {
+		t.Errorf("Hosts[Fabricator] = %+v", h)
+	}
+	p, ok := cfg.Projects["totality"]
+	if !ok || len(p.Inputs) != 1 || p.Inputs[0] != "totality" || len(p.Hosts) != 1 {
+		t.Errorf("Projects[totality] = %+v", p)
+	}
+	if p.SwitchLocal() {
+		t.Error("localSwitch = false should make SwitchLocal() false")
+	}
+}
+
+func TestSwitchLocalDefault(t *testing.T) {
+	if !(Project{}).SwitchLocal() {
+		t.Error("unset localSwitch should default to true")
+	}
+	on := true
+	if !(Project{LocalSwitch: &on}).SwitchLocal() {
+		t.Error("localSwitch = true should be true")
+	}
+}
+
+func TestProjectsPath(t *testing.T) {
+	// Default: "projects" beside the config file.
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	os.WriteFile(path, []byte("flakeRoot = \"/a\"\n"), 0o644)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := cfg.ProjectsPath(), filepath.Join(dir, "projects"); got != want {
+		t.Errorf("ProjectsPath() = %q, want %q", got, want)
+	}
+	// Explicit projectsDir (with ~) wins and is tilde-expanded.
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	os.WriteFile(path, []byte("flakeRoot = \"/a\"\nprojectsDir = \"~/proj\"\n"), 0o644)
+	cfg, err = Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := cfg.ProjectsPath(), filepath.Join(home, "proj"); got != want {
+		t.Errorf("ProjectsPath(~) = %q, want %q", got, want)
+	}
+}
+
 func TestLoadUnknownField(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.toml")

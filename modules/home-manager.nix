@@ -9,14 +9,81 @@
 #       flakeRoot = "~/Projects/nixos-config";
 #       commit = false;   # set true to auto-commit flake.lock after updates
 #     };
+#     # Declarative deploy hosts + projects for `nfu project` (optional).
+#     hosts.Fabricator = { hostname = "192.168.4.10"; deployArgs = [ "--magic-rollback" "false" ]; };
+#     projects.totality = { inputs = [ "totality" ]; hosts = [ "Fabricator" ]; };
 #   };
 #
-# Then `nfu totality` updates the totality input in that flake from anywhere.
+# `nfu totality` updates the totality input; `nfu project run totality` updates
+# it, rebuilds the local host, then deploys .#Fabricator. Hosts land in
+# ~/.config/nfu/config.toml; each project is written to
+# ~/.config/nfu/projects/<name>.toml (read-only). `nfu project add` writes extra
+# projects beside them.
 self:
 { config, lib, pkgs, ... }:
 let
   cfg = config.programs.nfu;
   tomlFormat = pkgs.formats.toml { };
+
+  hostType = lib.types.submodule {
+    options = {
+      hostname = lib.mkOption {
+        type = lib.types.str;
+        default = "";
+        description = "Informational address of the host (deploy-rs takes the real one from the flake's deploy.nodes).";
+      };
+      deployArgs = lib.mkOption {
+        type = lib.types.listOf lib.types.str;
+        default = [ ];
+        example = [ "--magic-rollback" "false" ];
+        description = "Extra arguments passed to `deploy` before the .#<host> installable.";
+      };
+    };
+  };
+
+  projectType = lib.types.submodule {
+    options = {
+      inputs = lib.mkOption {
+        type = lib.types.listOf lib.types.str;
+        description = "Flake inputs this project updates (at least one).";
+      };
+      hosts = lib.mkOption {
+        type = lib.types.listOf lib.types.str;
+        default = [ ];
+        description = "Deploy hosts to activate after the local switch, in order.";
+      };
+      localSwitch = lib.mkOption {
+        type = lib.types.nullOr lib.types.bool;
+        default = null;
+        description = "Whether a run rebuilds the local host. Null means the default (true); false for a remote-only project.";
+      };
+      description = lib.mkOption {
+        type = lib.types.str;
+        default = "";
+        description = "Optional human note shown in `nfu project list`.";
+      };
+    };
+  };
+
+  # config.toml holds the base settings plus the declarative host catalog.
+  hostToToml = h: lib.filterAttrs (_: v: v != "" && v != [ ]) {
+    inherit (h) hostname deployArgs;
+  };
+  configToml = cfg.settings // lib.optionalAttrs (cfg.hosts != { }) {
+    hosts = lib.mapAttrs (_: hostToToml) cfg.hosts;
+  };
+
+  # One TOML file per project (name = filename), dropping empty/unset fields.
+  projectToToml = p: lib.filterAttrs (_: v: v != null && v != "" && v != [ ]) {
+    inherit (p) inputs hosts description localSwitch;
+  };
+  projectFiles = lib.mapAttrs'
+    (name: p: lib.nameValuePair "nfu/projects/${name}.toml" {
+      source = tomlFormat.generate "nfu-project-${name}.toml" (projectToToml p);
+    })
+    cfg.projects;
+
+  writeConfig = cfg.settings != { } || cfg.hosts != { };
 in
 {
   options.programs.nfu = {
@@ -43,12 +110,47 @@ in
         See config.example.toml in the nfu repo for the schema.
       '';
     };
+
+    hosts = lib.mkOption {
+      type = lib.types.attrsOf hostType;
+      default = { };
+      example = lib.literalExpression ''
+        { Fabricator = { hostname = "192.168.4.10"; deployArgs = [ "--magic-rollback" "false" ]; }; }
+      '';
+      description = "Declarative deploy hosts (deploy-rs nodes) for `nfu project`, written to config.toml.";
+    };
+
+    projects = lib.mkOption {
+      type = lib.types.attrsOf projectType;
+      default = { };
+      example = lib.literalExpression ''
+        {
+          totality = { inputs = [ "totality" ]; hosts = [ "Fabricator" ]; };
+          inference = { inputs = [ "personal-packages" ]; hosts = [ "Fabricator" ]; localSwitch = false; };
+        }
+      '';
+      description = ''
+        Declarative projects for `nfu project`, one read-only file each under
+        ~/.config/nfu/projects/. `nfu project add` writes mutable ones beside them.
+      '';
+    };
   };
 
   config = lib.mkIf cfg.enable {
     home.packages = [ cfg.package ];
-    xdg.configFile = lib.mkIf (cfg.settings != { }) {
-      "nfu/config.toml".source = tomlFormat.generate "nfu-config.toml" cfg.settings;
-    };
+
+    xdg.configFile = lib.mkMerge [
+      (lib.mkIf writeConfig {
+        "nfu/config.toml".source = tomlFormat.generate "nfu-config.toml" configToml;
+      })
+      projectFiles
+    ];
+
+    assertions = lib.mapAttrsToList
+      (name: p: {
+        assertion = p.inputs != [ ];
+        message = "programs.nfu.projects.${name}: at least one input is required";
+      })
+      cfg.projects;
   };
 }

@@ -23,6 +23,7 @@ import (
 	"io/fs"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"github.com/conner-s/nfu/internal/config"
@@ -38,20 +39,36 @@ usage:
   nfu update <input>…      explicit update verb (use it to target an input
                            whose name collides with a reserved word)
 
+  nfu project run [<name>…]   update → nh os switch → deploy, scoped to a project
+  nfu project add [<name>]    build a project (TUI, or --inputs/--hosts for scripts)
+  nfu project use [<name>]    set / show the current project (bare run uses it)
+  nfu project remove <name>   delete a project
+  nfu project list            show configured projects
+
 flags:
   -f, --flake PATH   flake directory (overrides config and $NFU_FLAKE)
       --config PATH  config file (default: ~/.config/nfu/config.toml)
   -c, --commit       git-commit flake.lock after a successful update
       --no-commit    never commit, even if the config enables it
   -n, --dry-run      show what would change; write nothing
+  -y, --yes          skip the project-run confirmation prompt
       --json         machine-readable output
   -h, --help         show this help
 
-note: all / list / ls / update / help are reserved as the first word. To update
-an input literally named one of those, use ` + "`nfu update <name>`" + `.
+project add:
+      --inputs a,b       flake inputs the project updates
+      --hosts x,y        deploy hosts (deploy-rs nodes)
+      --host-args 'H:…'  extra deploy args for host H (repeatable)
+      --no-local-switch  skip nh os switch for this project
+      --print            print the project TOML instead of writing it
+
+note: all / list / ls / update / project / help are reserved as the first word.
+To update an input literally named one of those, use ` + "`nfu update <name>`" + `.
 `
 
-// globalFlags are shared by every subcommand.
+// globalFlags are shared by every subcommand. The `project add` fields below are
+// only meaningful under that verb; they live here because nfu parses one flag
+// set for the whole command line (see parseInterspersed).
 type globalFlags struct {
 	flake    string
 	config   string
@@ -59,7 +76,21 @@ type globalFlags struct {
 	noCommit bool
 	dryRun   bool
 	asJSON   bool
+	yes      bool
+
+	// `project add` definition flags.
+	inputs        string
+	hosts         string
+	hostArgs      stringList
+	noLocalSwitch bool
+	print         bool
 }
+
+// stringList is a repeatable string flag (e.g. --host-args used more than once).
+type stringList []string
+
+func (s *stringList) String() string     { return strings.Join(*s, ",") }
+func (s *stringList) Set(v string) error { *s = append(*s, v); return nil }
 
 func addFlags(fs *flag.FlagSet, g *globalFlags) {
 	fs.StringVar(&g.flake, "flake", "", "flake directory")
@@ -71,6 +102,15 @@ func addFlags(fs *flag.FlagSet, g *globalFlags) {
 	fs.BoolVar(&g.dryRun, "dry-run", false, "write nothing")
 	fs.BoolVar(&g.dryRun, "n", false, "dry-run (shorthand)")
 	fs.BoolVar(&g.asJSON, "json", false, "machine-readable JSON")
+	fs.BoolVar(&g.yes, "yes", false, "skip the project-run confirmation prompt")
+	fs.BoolVar(&g.yes, "y", false, "skip confirmation (shorthand)")
+
+	// `project add` definition flags.
+	fs.StringVar(&g.inputs, "inputs", "", "project add: comma-separated flake inputs")
+	fs.StringVar(&g.hosts, "hosts", "", "project add: comma-separated deploy hosts")
+	fs.Var(&g.hostArgs, "host-args", "project add: 'Host:--flag val' deploy args (repeatable)")
+	fs.BoolVar(&g.noLocalSwitch, "no-local-switch", false, "project add: skip nh os switch for this project")
+	fs.BoolVar(&g.print, "print", false, "project add: print the project TOML instead of writing")
 }
 
 func main() {
@@ -142,6 +182,8 @@ func dispatch(ctx context.Context, g globalFlags, positionals []string) error {
 			return fmt.Errorf("`update` needs at least one input name (e.g. `nfu update totality`)")
 		}
 		return runUpdate(ctx, g, names)
+	case "project":
+		return runProject(ctx, g, positionals[1:])
 	default:
 		return runUpdate(ctx, g, positionals)
 	}

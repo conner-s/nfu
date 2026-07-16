@@ -12,3 +12,33 @@ flakeRoot = "~/Projects/nixos-config"
 # "flake.lock: update totality (6bdb38a → a1b2c3d)".
 # Override per-run with --commit / --no-commit. Default: false.
 commit = false
+
+# Where the per-file project definitions live (see `nfu project`). Defaults to
+# a "projects" directory beside this config; point it at a git-tracked path to
+# version-control your projects.
+# projectsDir = "~/.config/nfu/projects"
+
+# --- nfu project ------------------------------------------------------------
+#
+# A "project" bundles an update → `nh os switch` → deploy pipeline behind one
+# command: `nfu project run <name>` (alias it to `npr`). Hosts are the deploy-rs
+# nodes to activate after the local switch; deployArgs are extra `deploy` flags
+# (Fabricator needs --magic-rollback false — its confirmation canary never lands).
+#
+# Hosts are declared here; projects can be declared here too, but usually live
+# as one file each under projectsDir (write them with `nfu project add`, or
+# declare them via the home-manager module — see the README).
+
+[hosts.Fabricator]
+hostname   = "192.168.4.10"
+deployArgs = ["--magic-rollback", "false"]
+
+[hosts.Servitor]
+hostname = "192.168.4.100"          # no deployArgs → a bare `deploy .#Servitor`
+
+# An inline project (equivalently: projects/totality.toml with these keys, minus
+# the [projects.totality] wrapper):
+[projects.totality]
+inputs      = ["totality"]
+hosts       = ["Fabricator"]        # optional; omit for a local-only project
+# localSwitch = false               # remote-only: skip `nh os switch`

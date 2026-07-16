@@ -109,6 +109,89 @@ nfu list             # aligned table of inputs
 nfu list --json      # machine-readable (name, type, ref, url, pin, lastModified, follows)
 ```
 
+## Projects: one command to update, switch, and deploy
+
+`nfu` updates a lock; `nh os switch` rebuilds the box; `deploy .#<host>` pushes to
+a remote. When you push a personal input, getting the change *running* means all
+three. A **project** bundles them behind one command:
+
+```
+nfu project run totality        # nfu totality -c → nh os switch → deploy .#Fabricator
+```
+
+Alias it to whatever's fastest to type (the design target is `npr`). A project
+names one or more **inputs**, whether to rebuild the **local** host, and an
+ordered list of deploy **hosts**. It runs fail-fast: a failed update never
+switches, and a failed local build never deploys.
+
+```
+nfu project run [<name>…]   run the pipeline (current project, or the named ones)
+nfu project add [<name>]    build a project — a TUI, or --inputs/--hosts for scripts
+nfu project use [<name>]    select the current project (bare `run` uses it), or print it
+nfu project remove <name>   delete a project
+nfu project list            show projects (current marked '*', with their source)
+```
+
+Like `kubectl` contexts, `use` sets a current project so a bare `nfu project run`
+re-runs it; name projects explicitly to override. Every run **previews the plan
+and asks to confirm** before it switches or deploys — `-y`/`--yes` skips the
+prompt, `--dry-run` prints the plan and stops:
+
+```
+nfu project run totality --dry-run
+```
+```
+totality  /home/you/Projects/nixos-config
+
+  update  totality  (commit flake.lock)
+  switch  nh os switch
+  deploy  deploy --magic-rollback false .#Fabricator
+```
+
+Runs commit `flake.lock` by default — a remote deploy only sees git-tracked
+files, so an uncommitted lock wouldn't reach the host (`--no-commit` opts out).
+
+### Hosts and deploy args
+
+Hosts are declared once and referenced by name. `deployArgs` are passed to
+`deploy` before the `.#<host>` — Fabricator needs `--magic-rollback false`
+(its post-activation canary never lands), Servitor needs nothing:
+
+```toml
+[hosts.Fabricator]
+deployArgs = ["--magic-rollback", "false"]
+
+[hosts.Servitor]         # no deployArgs → bare `deploy .#Servitor`
+```
+
+### Where projects live
+
+Projects are **one file each** under `~/.config/nfu/projects/<name>.toml`, so a
+project is individually shareable and version-controllable. The directory is the
+source of truth (any `*.toml` there is a project); a thin `projects.toml` index
+beside it holds the shared host catalog and display order.
+
+- **`nfu project add`** with no field flags on a terminal opens the TUI (name →
+  inputs → local switch → hosts); with `--inputs a,b --hosts x,y` it takes the
+  definition from flags (the agent/scripting path). `--print` emits a
+  self-contained TOML block (host defs inlined) instead of writing — paste it
+  into home-manager, or hand it to someone.
+- **home-manager** can declare hosts and projects directly (read-only files
+  alongside any you `add`):
+
+  ```nix
+  programs.nfu = {
+    enable = true;
+    settings = { flakeRoot = "~/Projects/nixos-config"; commit = false; };
+    hosts.Fabricator = { hostname = "192.168.4.10"; deployArgs = [ "--magic-rollback" "false" ]; };
+    projects.totality = { inputs = [ "totality" ]; hosts = [ "Fabricator" ]; };
+    projects.inference = { inputs = [ "personal-packages" ]; hosts = [ "Fabricator" ]; localSwitch = false; };
+  };
+  ```
+
+  A home-manager-declared project is read-only (a Nix-store symlink); `nfu
+  project remove` refuses it and points you back at your Nix config.
+
 ## Non-interactive contract
 
 Every command takes `--json` for scripting, and `--dry-run` never writes:

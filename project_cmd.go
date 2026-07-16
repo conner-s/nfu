@@ -1,0 +1,287 @@
+package main
+
+import (
+	"bufio"
+	"context"
+	"fmt"
+	"io"
+	"os"
+	"strings"
+
+	"github.com/conner-s/nfu/internal/config"
+	"github.com/conner-s/nfu/internal/flake"
+	"github.com/conner-s/nfu/internal/project"
+	"github.com/conner-s/nfu/internal/ui"
+)
+
+// runProject dispatches the `nfu project …` verbs. Bare `nfu project` lists.
+func runProject(ctx context.Context, g globalFlags, args []string) error {
+	if len(args) == 0 {
+		return runProjectList(ctx, g)
+	}
+	sub, rest := args[0], args[1:]
+	switch sub {
+	case "run":
+		return runProjectRun(ctx, g, rest)
+	case "use":
+		return runProjectUse(ctx, g, rest)
+	case "list", "ls":
+		return runProjectList(ctx, g)
+	case "add":
+		return runProjectAdd(ctx, g, rest)
+	case "remove", "rm":
+		return runProjectRemove(ctx, g, rest)
+	default:
+		return fmt.Errorf("unknown project subcommand %q (want: run | add | use | remove | list)", sub)
+	}
+}
+
+// loadCatalog assembles the merged view of every project: config.toml, the
+// mutable index, and the per-file store. It returns the config (for the flake
+// root), the catalog, and the config directory (home of the current-project
+// marker and the store).
+func loadCatalog(g globalFlags) (*config.Config, *project.Catalog, string, error) {
+	cfg, err := loadConfig(g.config)
+	if err != nil {
+		return nil, nil, "", err
+	}
+	configDir := cfg.Dir()
+	ix, err := project.LoadIndex(configDir)
+	if err != nil {
+		return nil, nil, "", err
+	}
+	stored, err := project.Scan(cfg.ProjectsPath())
+	if err != nil {
+		return nil, nil, "", err
+	}
+	return cfg, project.BuildCatalog(cfg, ix, stored), configDir, nil
+}
+
+// runProjectRun runs the pipeline for the named projects, or the current project
+// when none are named.
+func runProjectRun(ctx context.Context, g globalFlags, names []string) error {
+	cfg, cat, configDir, err := loadCatalog(g)
+	if err != nil {
+		return err
+	}
+	if len(names) == 0 {
+		cur, err := project.ReadCurrent(configDir)
+		if err != nil {
+			return err
+		}
+		if cur == "" {
+			return fmt.Errorf("no project given and no current project set\n" +
+				"  set one with `nfu project use <name>`, or name it: `nfu project run <name>`")
+		}
+		names = []string{cur}
+	}
+
+	client, err := flake.NewFromConfig(cfg, g.flake)
+	if err != nil {
+		return err
+	}
+	s := ui.NewStyles()
+	commit := !g.noCommit // project runs commit flake.lock by default (deploy needs it tracked)
+
+	// Resolve (and validate) every plan before running any of them.
+	plans := make([]project.Plan, 0, len(names))
+	for _, n := range names {
+		p, err := project.BuildPlan(cat, n, commit)
+		if err != nil {
+			return err
+		}
+		plans = append(plans, p)
+	}
+
+	for _, p := range plans {
+		fmt.Print(project.RenderPlan(s, p, client.Root()))
+	}
+
+	if g.dryRun {
+		fmt.Printf("\n%s\n", s.Dim.Render("dry-run: nothing was written"))
+		return nil
+	}
+
+	if g.noCommit {
+		for _, p := range plans {
+			if len(p.Hosts) > 0 {
+				fmt.Fprintln(os.Stderr, s.Warn.Render("! --no-commit with a deploy: an uncommitted flake.lock may not reach the host"))
+				break
+			}
+		}
+	}
+
+	if !g.yes {
+		ok, err := confirm(s, "proceed?")
+		if err != nil {
+			return err
+		}
+		if !ok {
+			fmt.Println(s.Dim.Render("aborted"))
+			return nil
+		}
+	}
+
+	for _, p := range plans {
+		res, err := project.Run(ctx, client, p, s)
+		if err != nil {
+			return err
+		}
+		fmt.Print("\n" + runSummary(s, p.Name, res))
+	}
+	return nil
+}
+
+// runProjectUse sets (or, with no name, prints) the current project.
+func runProjectUse(ctx context.Context, g globalFlags, args []string) error {
+	_, cat, configDir, err := loadCatalog(g)
+	if err != nil {
+		return err
+	}
+	s := ui.NewStyles()
+	if len(args) == 0 {
+		cur, err := project.ReadCurrent(configDir)
+		if err != nil {
+			return err
+		}
+		if cur == "" {
+			fmt.Println(s.Dim.Render("no current project set"))
+			return nil
+		}
+		fmt.Println(cur)
+		return nil
+	}
+	name := args[0]
+	if name == "none" || name == "-" {
+		if err := project.WriteCurrent(configDir, ""); err != nil {
+			return err
+		}
+		fmt.Println(s.Dim.Render("current project cleared"))
+		return nil
+	}
+	if _, ok := cat.Project(name); !ok {
+		return fmt.Errorf("unknown project %q; `nfu project list` shows what is defined", name)
+	}
+	if err := project.WriteCurrent(configDir, name); err != nil {
+		return err
+	}
+	fmt.Printf("%s %s\n", s.Good.Render("current project:"), s.Value.Render(name))
+	return nil
+}
+
+// runProjectList shows every configured project with its source and pipeline.
+func runProjectList(ctx context.Context, g globalFlags) error {
+	_, cat, configDir, err := loadCatalog(g)
+	if err != nil {
+		return err
+	}
+	cur, _ := project.ReadCurrent(configDir)
+	entries := cat.List()
+
+	if g.asJSON {
+		type entry struct {
+			Name        string   `json:"name"`
+			Source      string   `json:"source"`
+			Current     bool     `json:"current"`
+			Inputs      []string `json:"inputs"`
+			Hosts       []string `json:"hosts,omitempty"`
+			LocalSwitch bool     `json:"localSwitch"`
+			Description string   `json:"description,omitempty"`
+		}
+		out := struct {
+			Current  string  `json:"current,omitempty"`
+			Projects []entry `json:"projects"`
+		}{Current: cur}
+		for _, e := range entries {
+			out.Projects = append(out.Projects, entry{
+				Name: e.Name, Source: e.Source, Current: e.Name == cur,
+				Inputs: e.Project.Inputs, Hosts: e.Project.Hosts,
+				LocalSwitch: e.Project.SwitchLocal(), Description: e.Project.Description,
+			})
+		}
+		return writeJSON(out)
+	}
+
+	s := ui.NewStyles()
+	if len(entries) == 0 {
+		fmt.Println(s.Dim.Render("no projects yet — `nfu project add <name>` to create one"))
+		return nil
+	}
+	fmt.Print(renderProjectList(s, entries, cur))
+	return nil
+}
+
+// renderProjectList renders the aligned project table.
+func renderProjectList(s ui.Styles, entries []project.Entry, cur string) string {
+	var wn int
+	for _, e := range entries {
+		if n := len(e.Name); n > wn {
+			wn = n
+		}
+	}
+	var b strings.Builder
+	for _, e := range entries {
+		marker := " "
+		if e.Name == cur {
+			marker = "*"
+		}
+		hosts := "—"
+		if len(e.Project.Hosts) > 0 {
+			hosts = strings.Join(e.Project.Hosts, ", ")
+		}
+		sw := ""
+		if !e.Project.SwitchLocal() {
+			sw = " (no switch)"
+		}
+		fmt.Fprintf(&b, " %s %s  %s  %s %s %s%s\n",
+			s.Good.Render(marker),
+			s.Value.Render(padName(e.Name, wn)),
+			s.Dim.Render("["+e.Source+"]"),
+			s.Label.Render(strings.Join(e.Project.Inputs, " ")),
+			s.Dim.Render("→"),
+			s.Value.Render(hosts),
+			s.Dim.Render(sw),
+		)
+	}
+	return b.String()
+}
+
+func padName(s string, n int) string {
+	if len(s) < n {
+		return s + strings.Repeat(" ", n-len(s))
+	}
+	return s
+}
+
+// runSummary is the one-line closing report for a completed pipeline.
+func runSummary(s ui.Styles, name string, res project.Result) string {
+	moved := 0
+	for _, r := range res.Updates {
+		if r.Moved() {
+			moved++
+		}
+	}
+	parts := []string{fmt.Sprintf("updated %d", moved)}
+	if res.Switched {
+		parts = append(parts, "switched")
+	}
+	if len(res.Deployed) > 0 {
+		parts = append(parts, "deployed "+strings.Join(res.Deployed, ", "))
+	}
+	return fmt.Sprintf("%s %s  %s\n", s.Good.Render("✓"), s.Value.Render(name), s.Dim.Render(strings.Join(parts, " · ")))
+}
+
+// confirm asks the user to approve a destructive run. Without a TTY it refuses
+// rather than proceed unattended — pass -y for that.
+func confirm(s ui.Styles, prompt string) (bool, error) {
+	if !isTTY(os.Stdin) {
+		return false, fmt.Errorf("refusing to run unattended without a terminal; pass -y/--yes to confirm")
+	}
+	fmt.Printf("\n%s [y/N] ", s.Warn.Render(prompt))
+	line, err := bufio.NewReader(os.Stdin).ReadString('\n')
+	if err != nil && err != io.EOF {
+		return false, err
+	}
+	line = strings.ToLower(strings.TrimSpace(line))
+	return line == "y" || line == "yes", nil
+}

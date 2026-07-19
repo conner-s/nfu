@@ -139,12 +139,35 @@ ordered list of deploy **hosts**. It runs fail-fast: a failed update never
 switches, and a failed local build never deploys.
 
 ```
+nfu project                 full-screen project manager (browse · run · edit)
 nfu project run [<name>…]   run the pipeline (current project, or the named ones)
 nfu project add [<name>]    build a project — a TUI, or --inputs/--hosts for scripts
 nfu project use [<name>]    select the current project (bare `run` uses it), or print it
 nfu project remove <name>   delete a project
 nfu project list            show projects (current marked '*', with their source)
 ```
+
+### The project manager
+
+Bare `nfu project` on a terminal opens a full-screen manager (piped or `--json`
+it stays the plain list). Four views:
+
+- **list** — every project with its step count, target (`local` / `ssh:host`),
+  and last run · status. `j/k` move, `/` filters, `enter` opens, `u` sets the
+  current project.
+- **detail** — the pipeline laid out step by step next to the project's TOML as
+  it sits on disk. `h/l` pages between projects.
+- **run** — `r` runs the pipeline (or `d` for a dry-run) with a live step
+  sidebar, streaming log, and progress bar; `ctrl-c` cancels the in-flight
+  child command. A plan that rebuilds the local host first runs `sudo -v`
+  outside the TUI so nh's own sudo never prompts into a pipe.
+- **edit** — `e` opens the same builder as `project add` (inputs, local switch,
+  deploy hosts) without leaving the manager; `E` opens the project file in
+  `$EDITOR`; `n` starts a new project.
+
+Run outcomes land in `~/.config/nfu/runs.toml` (best-effort history, written by
+both the manager and `nfu project run`), which is where the list's
+"last run · status" column comes from.
 
 Like `kubectl` contexts, `use` sets a current project so a bare `nfu project run`
 re-runs it; name projects explicitly to override. Every run **previews the plan

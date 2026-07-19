@@ -39,6 +39,7 @@ usage:
   nfu update <input>…      explicit update verb (use it to target an input
                            whose name collides with a reserved word)
 
+  nfu project                 interactive project manager (browse · run · edit)
   nfu project run [<name>…]   update → nh os switch → deploy, scoped to a project
   nfu project add [<name>]    build a project (TUI, or --inputs/--hosts for scripts)
   nfu project use [<name>]    set / show the current project (bare run uses it)

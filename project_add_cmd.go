@@ -113,7 +113,18 @@ func persistProject(cfg *config.Config, cat *project.Catalog, configDir, name st
 		return nil
 	}
 
-	// Merge any new host defs into the shared index, and track order.
+	if err := writeProject(cfg, configDir, name, p, hostDefs); err != nil {
+		return err
+	}
+	fmt.Printf("%s %s  %s\n", s.Good.Render("saved project:"), s.Value.Render(name),
+		s.Dim.Render(cfg.ProjectsPath()+"/"+name+".toml"))
+	return nil
+}
+
+// writeProject is the silent persistence core shared by `add` and the manager
+// TUI: merge new host defs and display order into the index, then write the
+// per-file definition.
+func writeProject(cfg *config.Config, configDir, name string, p config.Project, hostDefs map[string]config.Host) error {
 	ix, err := project.LoadIndex(configDir)
 	if err != nil {
 		return err
@@ -132,12 +143,7 @@ func persistProject(cfg *config.Config, cat *project.Catalog, configDir, name st
 	if err := project.SaveIndex(configDir, ix); err != nil {
 		return err
 	}
-	if err := project.Save(cfg.ProjectsPath(), name, p); err != nil {
-		return err
-	}
-	fmt.Printf("%s %s  %s\n", s.Good.Render("saved project:"), s.Value.Render(name),
-		s.Dim.Render(cfg.ProjectsPath()+"/"+name+".toml"))
-	return nil
+	return project.Save(cfg.ProjectsPath(), name, p)
 }
 
 // runProjectRemove deletes a project file (mutable only) and tidies the index /

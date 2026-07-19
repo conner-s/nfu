@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/conner-s/nfu/internal/config"
 	"github.com/conner-s/nfu/internal/flake"
@@ -14,9 +15,14 @@ import (
 	"github.com/conner-s/nfu/internal/ui"
 )
 
-// runProject dispatches the `nfu project …` verbs. Bare `nfu project` lists.
+// runProject dispatches the `nfu project …` verbs. Bare `nfu project` opens the
+// full-screen manager on a terminal (list · run · edit); piped or --json it
+// falls back to the plain list.
 func runProject(ctx context.Context, g globalFlags, args []string) error {
 	if len(args) == 0 {
+		if !g.asJSON && isTTY(os.Stdout) && isTTY(os.Stdin) {
+			return runProjectManager(ctx, g)
+		}
 		return runProjectList(ctx, g)
 	}
 	sub, rest := args[0], args[1:]
@@ -123,7 +129,15 @@ func runProjectRun(ctx context.Context, g globalFlags, names []string) error {
 	}
 
 	for _, p := range plans {
+		start := time.Now()
 		res, err := project.Run(ctx, client, p, s)
+		// Record the outcome either way — the manager TUI and future lists show
+		// "last run · status" from this history. Best-effort, never fatal.
+		_ = project.RecordRun(configDir, p.Name, project.RunRecord{
+			At: time.Now(), OK: err == nil,
+			Elapsed: int64(time.Since(start).Seconds()),
+			Detail:  summaryParts(res),
+		})
 		if err != nil {
 			return err
 		}
@@ -255,6 +269,12 @@ func padName(s string, n int) string {
 
 // runSummary is the one-line closing report for a completed pipeline.
 func runSummary(s ui.Styles, name string, res project.Result) string {
+	return fmt.Sprintf("%s %s  %s\n", s.Good.Render("✓"), s.Value.Render(name), s.Dim.Render(summaryParts(res)))
+}
+
+// summaryParts condenses a run result to "updated N · switched · deployed …",
+// shared by the closing report and the recorded run history.
+func summaryParts(res project.Result) string {
 	moved := 0
 	for _, r := range res.Updates {
 		if r.Moved() {
@@ -268,7 +288,7 @@ func runSummary(s ui.Styles, name string, res project.Result) string {
 	if len(res.Deployed) > 0 {
 		parts = append(parts, "deployed "+strings.Join(res.Deployed, ", "))
 	}
-	return fmt.Sprintf("%s %s  %s\n", s.Good.Render("✓"), s.Value.Render(name), s.Dim.Render(strings.Join(parts, " · ")))
+	return strings.Join(parts, " · ")
 }
 
 // confirm asks the user to approve a destructive run. Without a TTY it refuses

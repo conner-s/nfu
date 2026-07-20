@@ -38,6 +38,7 @@ func runProjectManager(ctx context.Context, g globalFlags) error {
 		Commit:      !g.noCommit, // project runs commit flake.lock by default
 		ConfigDir:   configDir,
 		ProjectsDir: cfg.ProjectsPath(),
+		Theme:       cfg.Theme,
 		Persist: func(name string, p config.Project, defs map[string]config.Host) error {
 			return writeProject(cfg, configDir, name, p, defs)
 		},

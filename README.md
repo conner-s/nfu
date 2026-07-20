@@ -47,6 +47,16 @@ The flake root is resolved in order: `--flake PATH` → config `flakeRoot` →
 `$NFU_FLAKE` → `$FLAKE` (the `nh` convention). nfu validates the directory
 actually contains a `flake.nix` before it runs, so a typo fails fast and clearly.
 
+### Themes
+
+`theme = "<name>"` picks the color palette for every TUI and listing:
+`default`, `gruvbox-dark`, `gruvbox-light`, or `muted`. The default is built
+from ANSI palette codes so an unthemed nfu inherits your terminal's scheme;
+the named themes are truecolor (downsampled on terminals without it). An
+unknown name fails at config load with the valid set. Via home-manager, set
+`programs.nfu.theme = "gruvbox-dark"` — a typed enum, so a bad value fails at
+nix eval time.
+
 ## Update
 
 ```
@@ -252,6 +262,7 @@ nfu = {
 imports = [ inputs.nfu.homeManagerModules.default ];
 programs.nfu = {
   enable = true;
+  theme = "gruvbox-dark";
   settings = {
     flakeRoot = "~/Projects/nixos-config";
     commit = false;

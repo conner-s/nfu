@@ -14,6 +14,8 @@ import (
 	"strings"
 
 	toml "github.com/pelletier/go-toml/v2"
+
+	"github.com/conner-s/nfu/internal/theme"
 )
 
 // Config is the whole tool configuration.
@@ -26,6 +28,11 @@ type Config struct {
 	// resulting flake.lock (only that file) with a generated message. It is
 	// never a push. The --commit / --no-commit flags override it per run.
 	Commit bool `toml:"commit"`
+
+	// Theme names the TUI color palette (see internal/theme). Empty means the
+	// default theme, which uses ANSI palette codes so nfu inherits the
+	// terminal's scheme. Validated at load: a typo fails with the valid set.
+	Theme string `toml:"theme"`
 
 	// ProjectsDir is where the per-file project definitions live. A leading ~ is
 	// expanded; when unset it defaults to the "projects" directory beside this
@@ -129,6 +136,9 @@ func Load(path string) (*Config, error) {
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&c); err != nil {
 		return nil, fmt.Errorf("parse config %s: %w", path, err)
+	}
+	if _, err := theme.Get(c.Theme); err != nil {
+		return nil, fmt.Errorf("config %s: %w", path, err)
 	}
 	c.path = path
 	c.FlakeRoot = expandTilde(c.FlakeRoot)

@@ -76,12 +76,12 @@ func runProjectAddTUI(ctx context.Context, g globalFlags, cfg *config.Config, ca
 			}
 		}
 	}
-	res, err := tui.RunProjectForm(ctx, client, known, start)
+	res, err := tui.RunProjectForm(ctx, client, known, start, ui.StylesFor(cfg.Theme))
 	if err != nil {
 		return err
 	}
 	if !res.Saved {
-		fmt.Println(ui.NewStyles().Dim.Render("cancelled"))
+		fmt.Println(ui.StylesFor(cfg.Theme).Dim.Render("cancelled"))
 		return nil
 	}
 	return persistProject(cfg, cat, configDir, res.Name, res.Project, res.HostDefs, false)
@@ -91,7 +91,7 @@ func runProjectAddTUI(ctx context.Context, g globalFlags, cfg *config.Config, ca
 // the shared index and the project file references host names; --print instead
 // inlines the resolved host defs into a self-contained block.
 func persistProject(cfg *config.Config, cat *project.Catalog, configDir, name string, p config.Project, hostDefs map[string]config.Host, print bool) error {
-	s := ui.NewStyles()
+	s := ui.StylesFor(cfg.Theme)
 
 	if print {
 		defs := map[string]config.Host{}
@@ -167,7 +167,7 @@ func runProjectRemove(ctx context.Context, g globalFlags, args []string) error {
 	if cur, _ := project.ReadCurrent(configDir); cur == name {
 		_ = project.WriteCurrent(configDir, "")
 	}
-	fmt.Printf("%s %s\n", ui.NewStyles().Good.Render("removed project:"), name)
+	fmt.Printf("%s %s\n", ui.StylesFor(cfg.Theme).Good.Render("removed project:"), name)
 	return nil
 }
 

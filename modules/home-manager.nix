@@ -5,6 +5,7 @@
 #   imports = [ inputs.nfu.homeManagerModules.default ];
 #   programs.nfu = {
 #     enable = true;
+#     theme = "gruvbox-dark";
 #     settings = {
 #       flakeRoot = "~/Projects/nixos-config";
 #       commit = false;   # set true to auto-commit flake.lock after updates
@@ -65,13 +66,16 @@ let
     };
   };
 
-  # config.toml holds the base settings plus the declarative host catalog.
+  # config.toml holds the base settings plus the declarative host catalog. The
+  # typed theme option wins over a settings.theme freeform entry.
   hostToToml = h: lib.filterAttrs (_: v: v != "" && v != [ ]) {
     inherit (h) hostname deployArgs;
   };
-  configToml = cfg.settings // lib.optionalAttrs (cfg.hosts != { }) {
-    hosts = lib.mapAttrs (_: hostToToml) cfg.hosts;
-  };
+  configToml = cfg.settings
+    // lib.optionalAttrs (cfg.theme != null) { theme = cfg.theme; }
+    // lib.optionalAttrs (cfg.hosts != { }) {
+      hosts = lib.mapAttrs (_: hostToToml) cfg.hosts;
+    };
 
   # One TOML file per project (name = filename), dropping empty/unset fields.
   projectToToml = p: lib.filterAttrs (_: v: v != null && v != "" && v != [ ]) {
@@ -83,7 +87,7 @@ let
     })
     cfg.projects;
 
-  writeConfig = cfg.settings != { } || cfg.hosts != { };
+  writeConfig = cfg.settings != { } || cfg.hosts != { } || cfg.theme != null;
 in
 {
   options.programs.nfu = {
@@ -108,6 +112,18 @@ in
       description = ''
         nfu configuration, written to ~/.config/nfu/config.toml.
         See config.example.toml in the nfu repo for the schema.
+      '';
+    };
+
+    theme = lib.mkOption {
+      # Keep in sync with the Go theme registry (internal/theme).
+      type = lib.types.nullOr (lib.types.enum [ "default" "gruvbox-dark" "gruvbox-light" "muted" ]);
+      default = null;
+      example = "gruvbox-dark";
+      description = ''
+        Color theme for nfu's TUIs. null leaves the choice to the built-in
+        default (ANSI palette codes, inheriting the terminal scheme).
+        Shorthand for settings.theme, and takes precedence over it.
       '';
     };
 

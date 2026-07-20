@@ -289,6 +289,24 @@ func TestViewSmoke(t *testing.T) {
 	}
 }
 
+// The manager under a hex theme (truecolor path) still renders every view.
+func TestViewThemedSmoke(t *testing.T) {
+	m := testManager("nfu", "npk")
+	m.g = ui.GruvFor("gruvbox-dark")
+	m.spin = spinner.New()
+	m.deps.Client = flake.New("/flake")
+	cfg := &config.Config{Projects: map[string]config.Project{}}
+	m.deps.Catalog = project.BuildCatalog(cfg, &project.Index{}, nil)
+	m.w, m.h = 110, 32
+
+	for _, v := range []mview{mList, mDetail, mEditLoading} {
+		m.view = v
+		if out := m.View(); out == "" {
+			t.Fatalf("themed view %d rendered empty", v)
+		}
+	}
+}
+
 func TestDryRunPopulatesPlannedLines(t *testing.T) {
 	plan := project.Plan{Name: "nfu", Inputs: []string{"nixpkgs"}, LocalSwitch: true}
 	steps := stepsForPlan(plan, "/f")

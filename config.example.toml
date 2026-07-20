@@ -13,6 +13,12 @@ flakeRoot = "~/Projects/nixos-config"
 # Override per-run with --commit / --no-commit. Default: false.
 commit = false
 
+# TUI color theme: default | gruvbox-dark | gruvbox-light | muted.
+# The default uses ANSI palette codes, inheriting your terminal's scheme; the
+# named themes are truecolor (downsampled on terminals without it). An unknown
+# name fails at load with the valid set.
+# theme = "gruvbox-dark"
+
 # Where the per-file project definitions live (see `nfu project`). Defaults to
 # a "projects" directory beside this config; point it at a git-tracked path to
 # version-control your projects.

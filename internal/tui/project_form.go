@@ -90,12 +90,12 @@ type formModel struct {
 
 // RunProjectForm loads the flake's inputs, runs the builder, and returns the
 // built definition. known seeds the host list; start seeds an edit.
-func RunProjectForm(ctx context.Context, client *flake.Client, known []HostOption, start FormStart) (FormResult, error) {
+func RunProjectForm(ctx context.Context, client *flake.Client, known []HostOption, start FormStart, s ui.Styles) (FormResult, error) {
 	inputs, err := client.Inputs(ctx)
 	if err != nil {
 		return FormResult{}, err
 	}
-	m := newFormModel(inputs, known, start)
+	m := newFormModel(inputs, known, start, s)
 	final, err := tea.NewProgram(m, tea.WithContext(ctx)).Run()
 	if err != nil && !errors.Is(err, tea.ErrProgramKilled) && !errors.Is(err, tea.ErrInterrupted) {
 		return FormResult{}, err
@@ -109,7 +109,7 @@ func RunProjectForm(ctx context.Context, client *flake.Client, known []HostOptio
 	return FormResult{}, nil
 }
 
-func newFormModel(inputs []flake.Input, known []HostOption, start FormStart) formModel {
+func newFormModel(inputs []flake.Input, known []HostOption, start FormStart, s ui.Styles) formModel {
 	name := textinput.New()
 	name.Placeholder = "project-name"
 	name.Prompt = ""
@@ -153,7 +153,7 @@ func newFormModel(inputs []flake.Input, known []HostOption, start FormStart) for
 	}
 
 	return formModel{
-		styles:      ui.NewStyles(),
+		styles:      s,
 		section:     secName,
 		name:        name,
 		editing:     start.Editing,

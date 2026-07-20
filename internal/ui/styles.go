@@ -1,9 +1,14 @@
-// Package ui renders nfu's terminal output. Styling mirrors npk's palette so
-// the two tools feel like one family; lipgloss auto-strips color when stdout is
-// not a TTY, so piped and --json output stays clean.
+// Package ui renders nfu's terminal output. Colors come exclusively from the
+// theme registry (internal/theme) — the `theme` config key picks the palette,
+// and lipgloss auto-strips color when stdout is not a TTY, so piped and --json
+// output stays clean.
 package ui
 
-import "github.com/charmbracelet/lipgloss"
+import (
+	"github.com/charmbracelet/lipgloss"
+
+	"github.com/conner-s/nfu/internal/theme"
+)
 
 // Styles centralizes lipgloss styling so callers stay declarative.
 type Styles struct {
@@ -17,17 +22,36 @@ type Styles struct {
 	Help  lipgloss.Style
 }
 
-// NewStyles builds the shared palette (npk's colors).
+// NewStyles builds the default-theme palette (tests and themeless callers).
 func NewStyles() Styles {
+	t, _ := theme.Get("")
+	return StylesFromTheme(t)
+}
+
+// StylesFor builds the palette for the named theme. The name is validated at
+// config load; an unknown name here falls back to the default as belt and
+// braces rather than panicking mid-render.
+func StylesFor(name string) Styles {
+	t, err := theme.Get(name)
+	if err != nil {
+		t, _ = theme.Get("")
+	}
+	return StylesFromTheme(t)
+}
+
+// StylesFromTheme maps a theme onto the line-oriented style set. Structural
+// attributes (bold) live here on purpose: themes recolor, they do not relayout.
+func StylesFromTheme(t theme.Theme) Styles {
+	c := func(v string) lipgloss.Color { return lipgloss.Color(v) }
 	return Styles{
-		Title: lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("12")),
-		Label: lipgloss.NewStyle().Foreground(lipgloss.Color("244")),
-		Value: lipgloss.NewStyle().Foreground(lipgloss.Color("252")),
-		Dim:   lipgloss.NewStyle().Foreground(lipgloss.Color("240")),
-		Good:  lipgloss.NewStyle().Foreground(lipgloss.Color("10")),
-		Warn:  lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("11")),
-		Bad:   lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("9")),
-		Help:  lipgloss.NewStyle().Foreground(lipgloss.Color("241")),
+		Title: lipgloss.NewStyle().Bold(true).Foreground(c(t.Title)),
+		Label: lipgloss.NewStyle().Foreground(c(t.Label)),
+		Value: lipgloss.NewStyle().Foreground(c(t.Value)),
+		Dim:   lipgloss.NewStyle().Foreground(c(t.Dim)),
+		Good:  lipgloss.NewStyle().Foreground(c(t.Good)),
+		Warn:  lipgloss.NewStyle().Bold(true).Foreground(c(t.Warn)),
+		Bad:   lipgloss.NewStyle().Bold(true).Foreground(c(t.Bad)),
+		Help:  lipgloss.NewStyle().Foreground(c(t.Help)),
 	}
 }
 
@@ -40,10 +64,11 @@ const (
 	GlyphArrow     = "→"
 )
 
-// Gruv is the gruvbox palette the full-screen project manager paints with. The
-// manager owns the whole alt-screen (panes, selection bars, a log tail), so it
-// carries a richer palette than the line-oriented Styles above; lipgloss
-// downsamples the hex values on terminals without truecolor.
+// Gruv is the palette the full-screen project manager paints with. The manager
+// owns the whole alt-screen (panes, selection bars, a log tail), so it carries
+// a richer style set than the line-oriented Styles above. The field names keep
+// the gruvbox color vocabulary the views were written in; each maps to a
+// semantic theme slot, so non-gruvbox themes recolor it wholesale.
 type Gruv struct {
 	Orange lipgloss.Style // accents, selection marker, deploy steps
 	Yellow lipgloss.Style // key hints, table headers, in-flight state
@@ -62,24 +87,40 @@ type Gruv struct {
 	Box    lipgloss.Style // bordered meta/info boxes
 }
 
-// NewGruv builds the manager palette (colors from the Claude Design prototype).
+// NewGruv builds the default-theme manager palette (tests and themeless callers).
 func NewGruv() Gruv {
-	c := func(hex string) lipgloss.Style { return lipgloss.NewStyle().Foreground(lipgloss.Color(hex)) }
+	t, _ := theme.Get("")
+	return GruvFromTheme(t)
+}
+
+// GruvFor builds the manager palette for the named theme, with the same
+// fallback contract as StylesFor.
+func GruvFor(name string) Gruv {
+	t, err := theme.Get(name)
+	if err != nil {
+		t, _ = theme.Get("")
+	}
+	return GruvFromTheme(t)
+}
+
+// GruvFromTheme maps a theme onto the manager style set.
+func GruvFromTheme(t theme.Theme) Gruv {
+	c := func(v string) lipgloss.Style { return lipgloss.NewStyle().Foreground(lipgloss.Color(v)) }
 	return Gruv{
-		Orange: c("#fe8019"),
-		Yellow: c("#fabd2f"),
-		Green:  c("#b8bb26"),
-		Red:    c("#fb4934"),
-		Blue:   c("#83a598"),
-		Aqua:   c("#8ec07c"),
-		Purple: c("#d3869b"),
-		Fg:     c("#ebdbb2"),
-		Tan:    c("#bdae93"),
-		Gray:   c("#928374"),
-		Dim:    c("#7c6f64"),
-		Faint:  c("#665c54"),
-		Sel:    lipgloss.NewStyle().Background(lipgloss.Color("#504945")).Foreground(lipgloss.Color("#ebdbb2")),
-		Badge:  lipgloss.NewStyle().Background(lipgloss.Color("#fe8019")).Foreground(lipgloss.Color("#282828")).Bold(true).Padding(0, 1),
-		Box:    lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("#3c3836")).Padding(0, 1),
+		Orange: c(t.Accent),
+		Yellow: c(t.Warn),
+		Green:  c(t.Good),
+		Red:    c(t.Bad),
+		Blue:   c(t.Title),
+		Aqua:   c(t.AccentAlt),
+		Purple: c(t.Heading),
+		Fg:     c(t.Value),
+		Tan:    c(t.Muted),
+		Gray:   c(t.Label),
+		Dim:    c(t.Dim),
+		Faint:  c(t.Faint),
+		Sel:    lipgloss.NewStyle().Background(lipgloss.Color(t.SelBg)).Foreground(lipgloss.Color(t.Value)),
+		Badge:  lipgloss.NewStyle().Background(lipgloss.Color(t.Accent)).Foreground(lipgloss.Color(t.BadgeFg)).Bold(true).Padding(0, 1),
+		Box:    lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color(t.Border)).Padding(0, 1),
 	}
 }

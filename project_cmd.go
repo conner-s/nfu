@@ -86,7 +86,7 @@ func runProjectRun(ctx context.Context, g globalFlags, names []string) error {
 	if err != nil {
 		return err
 	}
-	s := ui.NewStyles()
+	s := ui.StylesFor(cfg.Theme)
 	commit := !g.noCommit // project runs commit flake.lock by default (deploy needs it tracked)
 
 	// Resolve (and validate) every plan before running any of them.
@@ -148,11 +148,11 @@ func runProjectRun(ctx context.Context, g globalFlags, names []string) error {
 
 // runProjectUse sets (or, with no name, prints) the current project.
 func runProjectUse(ctx context.Context, g globalFlags, args []string) error {
-	_, cat, configDir, err := loadCatalog(g)
+	cfg, cat, configDir, err := loadCatalog(g)
 	if err != nil {
 		return err
 	}
-	s := ui.NewStyles()
+	s := ui.StylesFor(cfg.Theme)
 	if len(args) == 0 {
 		cur, err := project.ReadCurrent(configDir)
 		if err != nil {
@@ -185,7 +185,7 @@ func runProjectUse(ctx context.Context, g globalFlags, args []string) error {
 
 // runProjectList shows every configured project with its source and pipeline.
 func runProjectList(ctx context.Context, g globalFlags) error {
-	_, cat, configDir, err := loadCatalog(g)
+	cfg, cat, configDir, err := loadCatalog(g)
 	if err != nil {
 		return err
 	}
@@ -216,7 +216,7 @@ func runProjectList(ctx context.Context, g globalFlags) error {
 		return writeJSON(out)
 	}
 
-	s := ui.NewStyles()
+	s := ui.StylesFor(cfg.Theme)
 	if len(entries) == 0 {
 		fmt.Println(s.Dim.Render("no projects yet — `nfu project add <name>` to create one"))
 		return nil

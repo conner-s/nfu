@@ -12,7 +12,7 @@ import (
 
 // runList shows every input with its locked pin and age.
 func runList(ctx context.Context, g globalFlags) error {
-	client, _, err := newClient(g)
+	client, cfg, err := newClient(g)
 	if err != nil {
 		return err
 	}
@@ -39,7 +39,7 @@ func runList(ctx context.Context, g globalFlags) error {
 		}
 		return writeJSON(out)
 	}
-	s := ui.NewStyles()
+	s := ui.StylesFor(cfg.Theme)
 	fmt.Print(titleLine(s, client.Root()))
 	fmt.Print(ui.RenderInputList(s, inputs, time.Now().Unix()))
 	return nil
@@ -56,7 +56,7 @@ func runInteractive(ctx context.Context, g globalFlags) error {
 	if err != nil {
 		return err
 	}
-	return tui.Run(ctx, client, commitEnabled(g, cfg))
+	return tui.Run(ctx, client, commitEnabled(g, cfg), ui.StylesFor(cfg.Theme))
 }
 
 // isTTY reports whether f is an interactive terminal.

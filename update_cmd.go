@@ -35,7 +35,7 @@ func runUpdate(ctx context.Context, g globalFlags, names []string) error {
 		return err
 	}
 	if g.dryRun {
-		return previewUpdate(ctx, g, client, names)
+		return previewUpdate(ctx, g, cfg, client, names)
 	}
 	results, updErr := client.Update(ctx, names...)
 	if results == nil && updErr != nil {
@@ -61,7 +61,7 @@ func runUpdateAll(ctx context.Context, g globalFlags) error {
 				names = append(names, in.Name)
 			}
 		}
-		return previewUpdate(ctx, g, client, names)
+		return previewUpdate(ctx, g, cfg, client, names)
 	}
 	results, updErr := client.UpdateAll(ctx)
 	if results == nil && updErr != nil {
@@ -78,14 +78,14 @@ func finishUpdate(ctx context.Context, g globalFlags, cfg *config.Config, client
 	if g.asJSON {
 		emitJSON(client.Root(), results, committed, commitMsg, warn, updErr)
 	} else {
-		emitText(client.Root(), results, committed, commitMsg, warn, updErr)
+		emitText(cfg, client.Root(), results, committed, commitMsg, warn, updErr)
 	}
 	return updErr
 }
 
 // previewUpdate (dry-run) shows the current pins of the requested inputs and the
 // command that would run, without touching flake.lock.
-func previewUpdate(ctx context.Context, g globalFlags, client *flake.Client, names []string) error {
+func previewUpdate(ctx context.Context, g globalFlags, cfg *config.Config, client *flake.Client, names []string) error {
 	now := time.Now().Unix()
 	inputs := make([]flake.Input, 0, len(names))
 	for _, n := range names {
@@ -112,7 +112,7 @@ func previewUpdate(ctx context.Context, g globalFlags, client *flake.Client, nam
 		}
 		return writeJSON(out)
 	}
-	s := ui.NewStyles()
+	s := ui.StylesFor(cfg.Theme)
 	fmt.Print(titleLine(s, client.Root()))
 	fmt.Print(ui.RenderInputList(s, inputs, now))
 	fmt.Printf("\n%s %s\n", s.Dim.Render("would run"),
@@ -124,8 +124,8 @@ func previewUpdate(ctx context.Context, g globalFlags, client *flake.Client, nam
 // (nix aborts atomically), so the happy "up to date" / "updated N" summary is
 // suppressed — main prints the actual error — and only what genuinely moved is
 // shown.
-func emitText(root string, results []flake.UpdateResult, committed bool, commitMsg, warn string, updErr error) {
-	s := ui.NewStyles()
+func emitText(cfg *config.Config, root string, results []flake.UpdateResult, committed bool, commitMsg, warn string, updErr error) {
+	s := ui.StylesFor(cfg.Theme)
 	now := time.Now().Unix()
 	fmt.Print(titleLine(s, root))
 	fmt.Print(ui.RenderResults(s, results, now))

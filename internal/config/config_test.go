@@ -106,6 +106,32 @@ func TestProjectsPath(t *testing.T) {
 	}
 }
 
+func TestLoadTheme(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	os.WriteFile(path, []byte("flakeRoot = \"/a\"\ntheme = \"gruvbox-dark\"\n"), 0o644)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Theme != "gruvbox-dark" {
+		t.Errorf("Theme = %q", cfg.Theme)
+	}
+}
+
+func TestLoadUnknownTheme(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	os.WriteFile(path, []byte("flakeRoot = \"/a\"\ntheme = \"solarized\"\n"), 0o644)
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("Load should reject an unknown theme")
+	}
+	if !strings.Contains(err.Error(), "solarized") || !strings.Contains(err.Error(), "gruvbox-dark") {
+		t.Errorf("error should name the bad value and list valid themes, got: %v", err)
+	}
+}
+
 func TestLoadUnknownField(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.toml")

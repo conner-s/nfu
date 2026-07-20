@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/conner-s/nfu/internal/flake"
+	"github.com/conner-s/nfu/internal/theme"
 )
 
 func TestShortPin(t *testing.T) {
@@ -69,6 +70,30 @@ func TestRenderResultsSmoke(t *testing.T) {
 	}
 	if !strings.Contains(out, "already current") {
 		t.Errorf("unchanged input should say 'already current':\n%s", out)
+	}
+}
+
+// Render through a hex theme so the truecolor path is exercised, and through
+// every registered theme so a palette with a broken slot can't slip in.
+func TestRenderResultsThemedSmoke(t *testing.T) {
+	results := []flake.UpdateResult{
+		{Input: "totality", OldPin: "6bdb38aa582f3ab09bb61a9fddd4cec7e069eee2", NewPin: "1122334455667788990011223344556677889900", OldMod: 1784048328, NewMod: 1784099000},
+	}
+	for _, name := range theme.Names() {
+		s := StylesFor(name)
+		out := RenderResults(s, results, int64(1_784_100_000))
+		if !strings.Contains(out, "totality") {
+			t.Errorf("theme %q: RenderResults missing input:\n%s", name, out)
+		}
+	}
+}
+
+// An unknown name (impossible via config, which validates at load) must fall
+// back to the default palette rather than panic or render blank.
+func TestStylesForFallback(t *testing.T) {
+	s := StylesFor("no-such-theme")
+	if got, want := s.Title.Render("x"), NewStyles().Title.Render("x"); got != want {
+		t.Errorf("fallback Title = %q, want default %q", got, want)
 	}
 }
 

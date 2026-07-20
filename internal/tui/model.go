@@ -87,7 +87,7 @@ type model struct {
 // the tty in raw mode, Ctrl-C arrives as a key event (not SIGINT), so aborting a
 // slow `nix flake metadata`/`update` requires cancelling that context from the
 // key handler. tea.WithContext also tears the program down on an external signal.
-func Run(ctx context.Context, client *flake.Client, commit bool) error {
+func Run(ctx context.Context, client *flake.Client, commit bool, s ui.Styles) error {
 	cctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	sp := spinner.New(spinner.WithSpinner(spinner.Dot))
@@ -96,7 +96,7 @@ func Run(ctx context.Context, client *flake.Client, commit bool) error {
 		cancel:      cancel,
 		client:      client,
 		commit:      commit,
-		styles:      ui.NewStyles(),
+		styles:      s,
 		spinner:     sp,
 		now:         time.Now().Unix(),
 		state:       stateLoading,

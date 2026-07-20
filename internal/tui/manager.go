@@ -39,6 +39,7 @@ type Deps struct {
 	Commit      bool // effective commit-flake.lock decision for runs
 	ConfigDir   string
 	ProjectsDir string
+	Theme       string // config theme name ("" = default); validated at load
 
 	Persist    func(name string, p config.Project, defs map[string]config.Host) error
 	Reload     func() (*project.Catalog, error)
@@ -183,7 +184,7 @@ func RunManager(ctx context.Context, deps Deps) error {
 		ctx:     cctx,
 		cancel:  cancel,
 		deps:    deps,
-		g:       ui.NewGruv(),
+		g:       ui.GruvFor(deps.Theme),
 		spin:    spinner.New(spinner.WithSpinner(spinner.Dot)),
 		now:     time.Now().Unix(),
 		view:    mList,
@@ -598,7 +599,7 @@ func (m *managerModel) showForm() tea.Cmd {
 			}
 		}
 	}
-	fm := newFormModel(m.inputs, known, start)
+	fm := newFormModel(m.inputs, known, start, ui.StylesFor(m.deps.Theme))
 	m.form = &fm
 	m.view = mEdit
 	return textinput.Blink

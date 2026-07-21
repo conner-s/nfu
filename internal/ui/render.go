@@ -157,19 +157,40 @@ func RenderResults(s Styles, results []flake.UpdateResult, now int64) string {
 	}
 	var b strings.Builder
 	for _, r := range results {
-		name := padRight(r.Input, wn)
-		switch {
-		case r.Unchanged:
-			b.WriteString(fmt.Sprintf("  %s %s  %s  %s\n",
-				s.Dim.Render(GlyphUnchanged), s.Value.Render(name),
-				s.Dim.Render("already current"),
-				s.Dim.Render(ShortPin(r.OldPin)+"  ("+RelAge(r.OldMod, now)+")")))
-		default:
-			b.WriteString(fmt.Sprintf("  %s %s  %s %s %s  %s\n",
-				s.Good.Render(GlyphMoved), s.Value.Render(name),
-				s.Value.Render(ShortPin(r.OldPin)), s.Dim.Render(GlyphArrow), s.Good.Render(ShortPin(r.NewPin)),
-				s.Dim.Render("("+RelAge(r.OldMod, now)+" "+GlyphArrow+" "+RelAge(r.NewMod, now)+")")))
-		}
+		b.WriteString(RenderResultRow(s, r, wn, now))
 	}
 	return b.String()
+}
+
+// RenderResultRow renders one update outcome line, glyph-led and newline-
+// terminated; nameWidth aligns the input column across rows (pass the widest
+// name of the batch). It is the unit the streaming updater prints as each
+// input's lock write lands.
+func RenderResultRow(s Styles, r flake.UpdateResult, nameWidth int, now int64) string {
+	name := padRight(r.Input, nameWidth)
+	if r.Unchanged {
+		return fmt.Sprintf("  %s %s  %s  %s\n",
+			s.Dim.Render(GlyphUnchanged), s.Value.Render(name),
+			s.Dim.Render("already current"),
+			s.Dim.Render(ShortPin(r.OldPin)+"  ("+RelAge(r.OldMod, now)+")"))
+	}
+	return fmt.Sprintf("  %s %s  %s %s %s  %s\n",
+		s.Good.Render(GlyphMoved), s.Value.Render(name),
+		s.Value.Render(ShortPin(r.OldPin)), s.Dim.Render(GlyphArrow), s.Good.Render(ShortPin(r.NewPin)),
+		s.Dim.Render("("+RelAge(r.OldMod, now)+" "+GlyphArrow+" "+RelAge(r.NewMod, now)+")"))
+}
+
+// RenderUpdatingText renders the transient "name  updating…" label the
+// streaming updater animates behind the spinner glyph; nameWidth keeps it
+// column-aligned with the result row that will replace it.
+func RenderUpdatingText(s Styles, name string, nameWidth int) string {
+	return fmt.Sprintf("%s  %s", s.Value.Render(padRight(name, nameWidth)), s.Dim.Render("updating…"))
+}
+
+// RenderFailedRow marks the input whose `nix flake update` failed mid-run, so
+// the streamed list accounts for every input that was attempted.
+func RenderFailedRow(s Styles, name string, nameWidth int) string {
+	return fmt.Sprintf("  %s %s  %s\n",
+		s.Bad.Render(GlyphError), s.Value.Render(padRight(name, nameWidth)),
+		s.Bad.Render("update failed"))
 }

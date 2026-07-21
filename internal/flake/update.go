@@ -3,6 +3,8 @@ package flake
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 )
@@ -24,23 +26,8 @@ func (c *Client) Update(ctx context.Context, names ...string) ([]UpdateResult, e
 		return nil, err
 	}
 	beforeByName := indexByName(before)
-
-	var unknown, follows []string
-	for _, n := range names {
-		in, ok := beforeByName[n]
-		if !ok {
-			unknown = append(unknown, n)
-		} else if in.Follows {
-			follows = append(follows, n)
-		}
-	}
-	if len(unknown) > 0 {
-		return nil, &UnknownInputError{Name: strings.Join(unknown, ", "), Available: inputNames(before)}
-	}
-	if len(follows) > 0 {
-		// A `follows` alias has no independent lock entry; updating it is a nix
-		// error. Point the user at the input it actually follows.
-		return nil, fmt.Errorf("%s is a `follows` alias with no independent lock; update the input it follows instead", strings.Join(follows, ", "))
+	if err := validateNames(names, beforeByName, before); err != nil {
+		return nil, err
 	}
 
 	res, runErr := c.run(ctx, "nix", c.updateArgs(names)...)
@@ -92,6 +79,104 @@ func (c *Client) UpdateAll(ctx context.Context) ([]UpdateResult, error) {
 		return results, runErr
 	}
 	return results, nil
+}
+
+// UpdateReporter observes UpdateSeq as it happens so a caller can render live
+// progress between lock writes. Callbacks arrive on the calling goroutine, in
+// order: one Plan after validation, then Start/Done per input.
+type UpdateReporter interface {
+	Plan(names []string) // the validated update order, before anything runs
+	Start(name string)   // this input's `nix flake update` is beginning
+	Done(r UpdateResult) // its outcome has landed in flake.lock
+}
+
+// UpdateSeq is Update's streaming counterpart: it moves the same inputs, but
+// one `nix flake update <name>` invocation at a time so rep can show progress
+// while the slow upstream fetches run. With no names it updates every
+// non-follows input (UpdateAll's set). The trade is per-input nix startup
+// overhead for feedback, plus weaker atomicity: it stops at the first failure,
+// returning what already landed alongside the error, and inputs after the
+// failing one are left untouched.
+func (c *Client) UpdateSeq(ctx context.Context, rep UpdateReporter, names ...string) ([]UpdateResult, error) {
+	before, err := c.Inputs(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if len(names) == 0 {
+		for _, in := range before {
+			if !in.Follows {
+				names = append(names, in.Name) // Inputs is already name-sorted
+			}
+		}
+	}
+	cur := indexByName(before)
+	if err := validateNames(names, cur, before); err != nil {
+		return nil, err
+	}
+	rep.Plan(names)
+
+	results := make([]UpdateResult, 0, len(names))
+	for _, n := range names {
+		rep.Start(n)
+		res, runErr := c.run(ctx, "nix", c.updateArgs([]string{n})...)
+		if runErr != nil {
+			return results, fmt.Errorf("updating %s: %w", n, runErr)
+		}
+		after, err := c.lockInputs()
+		if err != nil {
+			return results, err
+		}
+		r := buildResults([]string{n}, cur, after, updatedBlocks(string(res.stderr)))[0]
+		results = append(results, r)
+		rep.Done(r)
+		cur = after // this input's after is the next input's before
+	}
+	return results, nil
+}
+
+// lockInputs reads root/flake.lock straight from disk and indexes its inputs
+// by name. UpdateSeq calls it after every per-input lock write, where a full
+// `nix flake metadata` round-trip per input would be waste; the pre-update
+// snapshot still comes from Inputs, which also sees inputs flake.nix declares
+// but the lock does not yet hold.
+func (c *Client) lockInputs() (map[string]Input, error) {
+	data, err := os.ReadFile(filepath.Join(c.root, "flake.lock"))
+	if err != nil {
+		return nil, fmt.Errorf("read flake.lock: %w", err)
+	}
+	md, err := parseLockFile(data)
+	if err != nil {
+		return nil, err
+	}
+	inputs, err := md.buildInputs()
+	if err != nil {
+		return nil, err
+	}
+	return indexByName(inputs), nil
+}
+
+// validateNames rejects unknown inputs and `follows` aliases before any nix
+// invocation, so a typo yields a friendly list instead of a cryptic nix error
+// and never a partial write.
+func validateNames(names []string, byName map[string]Input, all []Input) error {
+	var unknown, follows []string
+	for _, n := range names {
+		in, ok := byName[n]
+		if !ok {
+			unknown = append(unknown, n)
+		} else if in.Follows {
+			follows = append(follows, n)
+		}
+	}
+	if len(unknown) > 0 {
+		return &UnknownInputError{Name: strings.Join(unknown, ", "), Available: inputNames(all)}
+	}
+	if len(follows) > 0 {
+		// A `follows` alias has no independent lock entry; updating it is a nix
+		// error. Point the user at the input it actually follows.
+		return fmt.Errorf("%s is a `follows` alias with no independent lock; update the input it follows instead", strings.Join(follows, ", "))
+	}
+	return nil
 }
 
 // buildResults pairs each name's before/after pin into an UpdateResult. It is

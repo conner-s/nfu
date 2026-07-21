@@ -1,6 +1,9 @@
 package flake
 
-import "testing"
+import (
+	"errors"
+	"testing"
+)
 
 func TestParseUpdatedHeader(t *testing.T) {
 	cases := []struct {
@@ -72,6 +75,56 @@ func TestBuildResults(t *testing.T) {
 	}
 	if res[1].Moved() || !res[1].Unchanged {
 		t.Errorf("npk should be unchanged: %+v", res[1])
+	}
+}
+
+func TestValidateNames(t *testing.T) {
+	all := []Input{
+		{Name: "nixpkgs"},
+		{Name: "mirror", Follows: true},
+		{Name: "totality"},
+	}
+	byName := indexByName(all)
+
+	if err := validateNames([]string{"nixpkgs", "totality"}, byName, all); err != nil {
+		t.Errorf("real inputs should validate: %v", err)
+	}
+
+	err := validateNames([]string{"nixpkgs", "typo"}, byName, all)
+	var unk *UnknownInputError
+	if !errors.As(err, &unk) {
+		t.Fatalf("unknown input should yield UnknownInputError, got %v", err)
+	}
+	if unk.Name != "typo" || len(unk.Available) != 3 {
+		t.Errorf("UnknownInputError = %+v", unk)
+	}
+
+	if err := validateNames([]string{"mirror"}, byName, all); err == nil || !contains(err.Error(), "follows") {
+		t.Errorf("follows alias should be rejected with an explanation, got %v", err)
+	}
+}
+
+// lockInputs must read root/flake.lock straight from disk and agree with the
+// nix-metadata view of the same lock (the testdata fixture).
+func TestLockInputs(t *testing.T) {
+	c := New("testdata")
+	got, err := c.lockInputs()
+	if err != nil {
+		t.Fatalf("lockInputs: %v", err)
+	}
+	np, ok := got["nixpkgs"]
+	if !ok || np.Rev != "8f0500b9660505dc3cb647775fe9a978a74b5283" {
+		t.Errorf("nixpkgs from lock file wrong: %+v (present=%v)", np, ok)
+	}
+	if mir, ok := got["mirror"]; !ok || !mir.Follows || mir.Rev != np.Rev {
+		t.Errorf("mirror should resolve through its follows edge: %+v", mir)
+	}
+}
+
+func TestLockInputsMissingFile(t *testing.T) {
+	c := New(t.TempDir())
+	if _, err := c.lockInputs(); err == nil {
+		t.Error("a missing flake.lock should be an error")
 	}
 }
 

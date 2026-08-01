@@ -32,6 +32,20 @@ type FormStart struct {
 	Hosts       []string
 	LocalSwitch bool
 	Editing     bool // an existing project (name is fixed)
+
+	// Base is the stored definition being edited. The form only shows the four
+	// fields above; everything else the file already said (description,
+	// flakeRoot, inline host defs) is carried through from here, so an edit
+	// never silently drops what it does not display.
+	Base config.Project
+}
+
+// EditStart builds the seed for editing an existing project entry.
+func EditStart(name string, p config.Project) FormStart {
+	return FormStart{
+		Name: name, Inputs: p.Inputs, Hosts: p.Hosts,
+		LocalSwitch: p.SwitchLocal(), Editing: true, Base: p,
+	}
 }
 
 // FormResult is what the form produced.
@@ -66,11 +80,13 @@ type formModel struct {
 	section section
 
 	name    textinput.Model
-	editing bool // editing an existing project (name locked)
+	editing bool           // editing an existing project (name locked)
+	base    config.Project // what the file said, for the fields this form does not show
 
 	inputs   []flake.Input
 	inCursor int
 	inSel    map[string]bool
+	inGone   map[string]bool // stored inputs the flake no longer has
 
 	localSwitch bool
 
@@ -121,6 +137,24 @@ func newFormModel(inputs []flake.Input, known []HostOption, start FormStart, s u
 		sel[n] = true
 	}
 
+	// An input the stored project names but the flake no longer has (renamed or
+	// removed upstream) would otherwise just not be listed — and saving would
+	// drop it without a word. List it, ticked and flagged, so the edit is the
+	// user's call.
+	have := map[string]bool{}
+	for _, in := range inputs {
+		have[in.Name] = true
+	}
+	missing := map[string]bool{}
+	listed := append([]flake.Input(nil), inputs...)
+	for _, n := range start.Inputs {
+		if !have[n] {
+			listed = append(listed, flake.Input{Name: n})
+			missing[n] = true
+		}
+	}
+	inputs = listed
+
 	// Build the host list: catalog hosts, plus any project hosts not in it.
 	wanted := map[string]bool{}
 	for _, h := range start.Hosts {
@@ -135,7 +169,9 @@ func newFormModel(inputs []flake.Input, known []HostOption, start FormStart, s u
 	sort.Slice(hosts, func(i, j int) bool { return hosts[i].name < hosts[j].name })
 	for _, h := range start.Hosts {
 		if !seen[h] {
-			hosts = append(hosts, hostEntry{name: h, selected: true, known: false})
+			// A host the shared catalog does not know: its args, if any, come
+			// from the project file's own inline def.
+			hosts = append(hosts, hostEntry{name: h, args: start.Base.HostDefs[h].DeployArgs, selected: true, known: false})
 			seen[h] = true
 		}
 	}
@@ -157,8 +193,10 @@ func newFormModel(inputs []flake.Input, known []HostOption, start FormStart, s u
 		section:     secName,
 		name:        name,
 		editing:     start.Editing,
+		base:        start.Base,
 		inputs:      inputs,
 		inSel:       sel,
+		inGone:      missing,
 		localSwitch: localSwitch,
 		hosts:       hosts,
 		editIdx:     -1,
@@ -344,7 +382,14 @@ func (m formModel) save() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	p := config.Project{Inputs: inputs}
+	// Start from the stored definition so description / flakeRoot survive an
+	// edit, then overwrite exactly the fields this form owns.
+	p := m.base
+	p.Inputs = inputs
+	p.Hosts = nil
+	p.HostDefs = nil
+	p.LocalSwitch = nil
+
 	defs := map[string]config.Host{}
 	for _, h := range m.hosts {
 		if !h.selected {
@@ -353,6 +398,18 @@ func (m formModel) save() (tea.Model, tea.Cmd) {
 		p.Hosts = append(p.Hosts, h.name)
 		if len(h.args) > 0 && (!h.known || h.edited) {
 			defs[h.name] = config.Host{DeployArgs: h.args}
+		}
+		// An inline def on the file shadows the shared catalog, so it has to be
+		// carried (and refreshed when the args were edited here) rather than
+		// left behind to override what we just wrote to the index.
+		if old, ok := m.base.HostDefs[h.name]; ok {
+			if h.edited {
+				old.DeployArgs = h.args
+			}
+			if p.HostDefs == nil {
+				p.HostDefs = map[string]config.Host{}
+			}
+			p.HostDefs[h.name] = old
 		}
 	}
 	if !m.localSwitch {

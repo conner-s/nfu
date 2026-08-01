@@ -42,6 +42,7 @@ usage:
   nfu project                 interactive project manager (browse · run · edit)
   nfu project run [<name>…]   update → nh os switch → deploy, scoped to a project
   nfu project add [<name>]    build a project (TUI, or --inputs/--hosts for scripts)
+  nfu project edit [<name>]   change a project in the same TUI, pre-filled
   nfu project use [<name>]    set / show the current project (bare run uses it)
   nfu project remove <name>   delete a project
   nfu project list            show configured projects
@@ -56,12 +57,18 @@ flags:
       --json         machine-readable output
   -h, --help         show this help
 
-project add:
+project add / edit:
       --inputs a,b       flake inputs the project updates
       --hosts x,y        deploy hosts (deploy-rs nodes)
       --host-args 'H:…'  extra deploy args for host H (repeatable)
+      --local-switch     run nh os switch for this project
       --no-local-switch  skip nh os switch for this project
       --print            print the project TOML instead of writing it
+
+  add takes the whole definition from these flags; edit merges them into what is
+  already stored, so only the fields you name change. With none of them on a
+  terminal both open the TUI — edit pre-filled — and offer to git-commit the
+  project file afterwards (-y commits without asking, --no-commit skips it).
 
 note: all / list / ls / update / project / help are reserved as the first word.
 To update an input literally named one of those, use ` + "`nfu update <name>`" + `.
@@ -79,10 +86,11 @@ type globalFlags struct {
 	asJSON   bool
 	yes      bool
 
-	// `project add` definition flags.
+	// `project add` / `project edit` definition flags.
 	inputs        string
 	hosts         string
 	hostArgs      stringList
+	localSwitch   bool
 	noLocalSwitch bool
 	print         bool
 }
@@ -106,12 +114,13 @@ func addFlags(fs *flag.FlagSet, g *globalFlags) {
 	fs.BoolVar(&g.yes, "yes", false, "skip the project-run confirmation prompt")
 	fs.BoolVar(&g.yes, "y", false, "skip confirmation (shorthand)")
 
-	// `project add` definition flags.
-	fs.StringVar(&g.inputs, "inputs", "", "project add: comma-separated flake inputs")
-	fs.StringVar(&g.hosts, "hosts", "", "project add: comma-separated deploy hosts")
-	fs.Var(&g.hostArgs, "host-args", "project add: 'Host:--flag val' deploy args (repeatable)")
-	fs.BoolVar(&g.noLocalSwitch, "no-local-switch", false, "project add: skip nh os switch for this project")
-	fs.BoolVar(&g.print, "print", false, "project add: print the project TOML instead of writing")
+	// `project add` / `project edit` definition flags.
+	fs.StringVar(&g.inputs, "inputs", "", "project add/edit: comma-separated flake inputs")
+	fs.StringVar(&g.hosts, "hosts", "", "project add/edit: comma-separated deploy hosts")
+	fs.Var(&g.hostArgs, "host-args", "project add/edit: 'Host:--flag val' deploy args (repeatable)")
+	fs.BoolVar(&g.localSwitch, "local-switch", false, "project add/edit: run nh os switch for this project")
+	fs.BoolVar(&g.noLocalSwitch, "no-local-switch", false, "project add/edit: skip nh os switch for this project")
+	fs.BoolVar(&g.print, "print", false, "project add/edit: print the project TOML instead of writing")
 }
 
 func main() {

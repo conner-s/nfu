@@ -35,10 +35,12 @@ func runProject(ctx context.Context, g globalFlags, args []string) error {
 		return runProjectList(ctx, g)
 	case "add":
 		return runProjectAdd(ctx, g, rest)
+	case "edit":
+		return runProjectEdit(ctx, g, rest)
 	case "remove", "rm":
 		return runProjectRemove(ctx, g, rest)
 	default:
-		return fmt.Errorf("unknown project subcommand %q (want: run | add | use | remove | list)", sub)
+		return fmt.Errorf("unknown project subcommand %q (want: run | add | edit | use | remove | list)", sub)
 	}
 }
 
@@ -291,17 +293,37 @@ func summaryParts(res project.Result) string {
 	return strings.Join(parts, " · ")
 }
 
+// stdin is shared by every prompt: a fresh bufio.Reader per question would drop
+// whatever the previous read buffered past its newline.
+var stdin = bufio.NewReader(os.Stdin)
+
 // confirm asks the user to approve a destructive run. Without a TTY it refuses
 // rather than proceed unattended — pass -y for that.
 func confirm(s ui.Styles, prompt string) (bool, error) {
+	return confirmDefault(s, prompt, false)
+}
+
+// confirmDefault is confirm with a chosen answer for a bare Enter: running a
+// pipeline defaults to no, committing a project file you just saved to yes.
+func confirmDefault(s ui.Styles, prompt string, def bool) (bool, error) {
 	if !isTTY(os.Stdin) {
 		return false, fmt.Errorf("refusing to run unattended without a terminal; pass -y/--yes to confirm")
 	}
-	fmt.Printf("\n%s [y/N] ", s.Warn.Render(prompt))
-	line, err := bufio.NewReader(os.Stdin).ReadString('\n')
+	hint := "[y/N]"
+	if def {
+		hint = "[Y/n]"
+	}
+	fmt.Printf("\n%s %s ", s.Warn.Render(prompt), hint)
+	line, err := stdin.ReadString('\n')
 	if err != nil && err != io.EOF {
 		return false, err
 	}
-	line = strings.ToLower(strings.TrimSpace(line))
-	return line == "y" || line == "yes", nil
+	switch strings.ToLower(strings.TrimSpace(line)) {
+	case "y", "yes":
+		return true, nil
+	case "":
+		return def, nil
+	default:
+		return false, nil
+	}
 }

@@ -593,10 +593,7 @@ func (m *managerModel) showForm() tea.Cmd {
 	start := FormStart{}
 	if !m.editingNew {
 		if e := m.curEntry(); e != nil {
-			start = FormStart{
-				Name: e.Name, Inputs: e.Project.Inputs, Hosts: e.Project.Hosts,
-				LocalSwitch: e.Project.SwitchLocal(), Editing: true,
-			}
+			start = EditStart(e.Name, e.Project)
 		}
 	}
 	fm := newFormModel(m.inputs, known, start, ui.StylesFor(m.deps.Theme))

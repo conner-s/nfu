@@ -1,7 +1,9 @@
-// Package git is a tiny, no-shell helper for the one write nfu ever makes to a
-// flake's version control: committing an updated flake.lock — and only
-// flake.lock — with a generated message. It never stages other files and never
-// pushes.
+// Package git is a tiny, no-shell helper for the writes nfu makes to version
+// control: committing an updated flake.lock in the flake repo, and committing a
+// project definition after `nfu project add` / `nfu project edit` when the
+// config directory is itself tracked. Every commit is pathspec-scoped to the
+// files it was given, so nothing else in the index is ever swept in, and it
+// never pushes.
 package git
 
 import (
@@ -43,26 +45,51 @@ func IsRepo(ctx context.Context, dir string) bool {
 	return err == nil && out == "true"
 }
 
-// LockChanged reports whether flake.lock has uncommitted changes (modified or
-// newly created) in dir's work tree.
-func LockChanged(ctx context.Context, dir string) (bool, error) {
-	out, err := run(ctx, dir, "status", "--porcelain", "--", LockFile)
+// Root returns the top level of the work tree containing dir. It errors when dir
+// is not in a repository, which is how callers tell "not tracked" from "tracked
+// and clean".
+func Root(ctx context.Context, dir string) (string, error) {
+	return run(ctx, dir, "rev-parse", "--show-toplevel")
+}
+
+// Changed reports whether any of paths has uncommitted changes (modified or
+// not yet tracked) in dir's work tree.
+func Changed(ctx context.Context, dir string, paths ...string) (bool, error) {
+	if len(paths) == 0 {
+		return false, nil
+	}
+	out, err := run(ctx, dir, append([]string{"status", "--porcelain", "--"}, paths...)...)
 	if err != nil {
 		return false, err
 	}
 	return strings.TrimSpace(out) != "", nil
 }
 
-// CommitLock commits ONLY flake.lock with the given message. It stages the file
-// first (covering a not-yet-tracked flake.lock) and uses a pathspec commit so
-// nothing else in the index is swept in. The caller must ensure there is
-// something to commit (see LockChanged); an empty commit is an error.
-func CommitLock(ctx context.Context, dir, message string) error {
-	if _, err := run(ctx, dir, "add", "--", LockFile); err != nil {
+// Commit stages paths and commits ONLY them with the given message. Staging
+// first covers files git does not track yet, and the pathspec commit keeps
+// anything else already in the index out of it. The caller must ensure there is
+// something to commit (see Changed); an empty commit is an error.
+func Commit(ctx context.Context, dir, message string, paths ...string) error {
+	if len(paths) == 0 {
+		return fmt.Errorf("git commit: no paths given")
+	}
+	if _, err := run(ctx, dir, append([]string{"add", "--"}, paths...)...); err != nil {
 		return err
 	}
-	if _, err := run(ctx, dir, "commit", "-m", message, "--", LockFile); err != nil {
+	args := append([]string{"commit", "-m", message, "--"}, paths...)
+	if _, err := run(ctx, dir, args...); err != nil {
 		return err
 	}
 	return nil
+}
+
+// LockChanged reports whether flake.lock has uncommitted changes (modified or
+// newly created) in dir's work tree.
+func LockChanged(ctx context.Context, dir string) (bool, error) {
+	return Changed(ctx, dir, LockFile)
+}
+
+// CommitLock commits ONLY flake.lock with the given message.
+func CommitLock(ctx context.Context, dir, message string) error {
+	return Commit(ctx, dir, message, LockFile)
 }

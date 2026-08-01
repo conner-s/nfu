@@ -152,6 +152,7 @@ switches, and a failed local build never deploys.
 nfu project                 full-screen project manager (browse · run · edit)
 nfu project run [<name>…]   run the pipeline (current project, or the named ones)
 nfu project add [<name>]    build a project — a TUI, or --inputs/--hosts for scripts
+nfu project edit [<name>]   change one — the same TUI, pre-filled from the file
 nfu project use [<name>]    select the current project (bare `run` uses it), or print it
 nfu project remove <name>   delete a project
 nfu project list            show projects (current marked '*', with their source)
@@ -171,9 +172,10 @@ it stays the plain list). Four views:
   sidebar, streaming log, and progress bar; `ctrl-c` cancels the in-flight
   child command. A plan that rebuilds the local host first runs `sudo -v`
   outside the TUI so nh's own sudo never prompts into a pipe.
-- **edit** — `e` opens the same builder as `project add` (inputs, local switch,
-  deploy hosts) without leaving the manager; `E` opens the project file in
-  `$EDITOR`; `n` starts a new project.
+- **edit** — `e` opens the same pre-filled builder as `nfu project edit` (inputs,
+  local switch, deploy hosts) without leaving the manager; `E` opens the project
+  file in `$EDITOR`; `n` starts a new project. Saving here writes the file
+  without the commit offer — the manager owns the whole screen.
 
 Run outcomes land in `~/.config/nfu/runs.toml` (best-effort history, written by
 both the manager and `nfu project run`), which is where the list's
@@ -223,6 +225,16 @@ beside it holds the shared host catalog and display order.
   definition from flags (the agent/scripting path). `--print` emits a
   self-contained TOML block (host defs inlined) instead of writing — paste it
   into home-manager, or hand it to someone.
+- **`nfu project edit <name>`** reopens that same builder **pre-filled** with
+  what is on disk — inputs ticked, hosts ticked with their deploy args, the local
+  switch as stored. `ctrl+s` saves. Bare `nfu project edit` edits the current
+  project. The fields the form does not show (`description`, `flakeRoot`, inline
+  host defs) are carried through, and an input the flake no longer has is listed
+  as `(not in the flake)` rather than quietly dropped.
+
+  Where `add` replaces a definition, `edit` **merges**: `nfu project edit totality
+  --hosts Servitor` changes the hosts and leaves everything else alone. Same
+  flags as `add`, plus `--local-switch` to undo a `--no-local-switch`.
 - **home-manager** can declare hosts and projects directly (read-only files
   alongside any you `add`):
 
@@ -237,7 +249,25 @@ beside it holds the shared host catalog and display order.
   ```
 
   A home-manager-declared project is read-only (a Nix-store symlink); `nfu
-  project remove` refuses it and points you back at your Nix config.
+  project remove` and `nfu project edit` refuse it and point you back at your Nix
+  config.
+
+### Committing what you saved
+
+A project directory is meant to be version-controlled — that is what
+`projectsDir` is for. So when the files `add` / `edit` / `remove` just wrote sit
+in a git repo, nfu offers to commit them, and commits **only** those paths:
+
+```
+saved project: totality  ~/.config/nfu/projects/totality.toml
+
+commit projects.toml, projects/totality.toml → nixos-config? [Y/n]
+committed: nfu: update project totality
+```
+
+`-y` takes the offer without asking (for scripts), `--no-commit` skips it, and
+off a terminal it stays silent. A failed commit is a warning, never an error —
+the project is already saved.
 
 ## Non-interactive contract
 

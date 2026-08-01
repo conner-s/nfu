@@ -13,9 +13,11 @@ import (
 	"github.com/conner-s/nfu/internal/ui"
 )
 
-// runProjectAdd creates or edits a project. With no field flags on a terminal it
-// opens the TUI builder; otherwise it takes the definition from flags (the
+// runProjectAdd creates a project. With no field flags on a terminal it opens
+// the TUI builder; otherwise it takes the definition from flags (the
 // agent/scripting path). --print emits the resulting TOML instead of writing.
+// Naming an existing project replaces its definition — `nfu project edit` is the
+// verb that keeps what it does not touch.
 func runProjectAdd(ctx context.Context, g globalFlags, args []string) error {
 	cfg, cat, configDir, err := loadCatalog(g)
 	if err != nil {
@@ -26,9 +28,8 @@ func runProjectAdd(ctx context.Context, g globalFlags, args []string) error {
 		name = args[0]
 	}
 
-	hasFields := g.inputs != "" || g.hosts != "" || len(g.hostArgs) > 0 || g.noLocalSwitch
-	if !hasFields && !g.print && isTTY(os.Stdout) && isTTY(os.Stdin) {
-		return runProjectAddTUI(ctx, g, cfg, cat, configDir, name)
+	if !hasFieldFlags(g) && !g.print && isTTY(os.Stdout) && isTTY(os.Stdin) {
+		return runProjectForm(ctx, g, cfg, cat, configDir, tui.FormStart{Name: name})
 	}
 
 	// Flag form: name + at least one input required.
@@ -38,27 +39,72 @@ func runProjectAdd(ctx context.Context, g globalFlags, args []string) error {
 	if err := project.ValidateName(name); err != nil {
 		return err
 	}
-	inputs := splitComma(g.inputs)
-	if len(inputs) == 0 {
-		return fmt.Errorf("at least one input is required (--inputs a,b)")
-	}
-
-	p := config.Project{Inputs: inputs, Hosts: splitComma(g.hosts)}
-	if g.noLocalSwitch {
-		f := false
-		p.LocalSwitch = &f
-	}
-	hostDefs, err := parseHostArgs(g.hostArgs)
+	p, hostDefs, err := applyFieldFlags(g, config.Project{})
 	if err != nil {
 		return err
 	}
-
-	return persistProject(cfg, cat, configDir, name, p, hostDefs, g.print)
+	if len(p.Inputs) == 0 {
+		return fmt.Errorf("at least one input is required (--inputs a,b)")
+	}
+	return persistProject(ctx, g, cfg, cat, configDir, name, p, hostDefs, g.print)
 }
 
-// runProjectAddTUI opens the interactive builder, seeded with the catalog's
-// hosts (and the existing project when editing), then persists the result.
-func runProjectAddTUI(ctx context.Context, g globalFlags, cfg *config.Config, cat *project.Catalog, configDir, name string) error {
+// runProjectEdit reopens an existing project in the same builder `add` uses,
+// pre-filled with what is on disk — change the inputs, the local switch, the
+// hosts, save with ctrl+s, and the write is offered as a git commit. With field
+// flags (or off a terminal) it takes the edit from flags instead, merging them
+// into the stored definition so only what is named changes.
+func runProjectEdit(ctx context.Context, g globalFlags, args []string) error {
+	cfg, cat, configDir, err := loadCatalog(g)
+	if err != nil {
+		return err
+	}
+	var name string
+	if len(args) > 0 {
+		name = args[0]
+	}
+	if name == "" { // bare `edit` edits the current project, like bare `run` runs it
+		cur, err := project.ReadCurrent(configDir)
+		if err != nil {
+			return err
+		}
+		if cur == "" {
+			return fmt.Errorf("no project given and no current project set\n" +
+				"  name it: `nfu project edit <name>`, or set one with `nfu project use <name>`")
+		}
+		name = cur
+	}
+
+	e, ok := cat.Project(name)
+	if !ok {
+		return fmt.Errorf("unknown project %q; `nfu project list` shows what is defined, "+
+			"`nfu project add %s` creates it", name, name)
+	}
+	if e.Source == project.SourceDeclared {
+		return fmt.Errorf("project %q is declared read-only (home-manager / config.toml); "+
+			"edit it there, or copy it out with `nfu project add %s --print`", name, name)
+	}
+
+	if !hasFieldFlags(g) && !g.print {
+		if !isTTY(os.Stdout) || !isTTY(os.Stdin) {
+			return fmt.Errorf("`project edit` with no field flags opens the builder, which needs a terminal\n" +
+				"  name what changes instead: --inputs a,b / --hosts x,y / --host-args 'H:…' / --local-switch,\n" +
+				"  or --print to dump the definition as it stands")
+		}
+		return runProjectForm(ctx, g, cfg, cat, configDir, tui.EditStart(name, e.Project))
+	}
+
+	p, hostDefs, err := applyFieldFlags(g, e.Project)
+	if err != nil {
+		return err
+	}
+	return persistProject(ctx, g, cfg, cat, configDir, name, p, hostDefs, g.print)
+}
+
+// runProjectForm opens the interactive builder seeded with start (blank for a
+// new project, pre-filled for an edit) plus the catalog's known hosts, then
+// persists what it returns.
+func runProjectForm(ctx context.Context, g globalFlags, cfg *config.Config, cat *project.Catalog, configDir string, start tui.FormStart) error {
 	client, err := flake.NewFromConfig(cfg, g.flake)
 	if err != nil {
 		return err
@@ -67,30 +113,77 @@ func runProjectAddTUI(ctx context.Context, g globalFlags, cfg *config.Config, ca
 	for hn, h := range cat.Hosts() {
 		known = append(known, tui.HostOption{Name: hn, Args: h.DeployArgs})
 	}
-	start := tui.FormStart{Name: name}
-	if name != "" {
-		if e, ok := cat.Project(name); ok {
-			start = tui.FormStart{
-				Name: name, Inputs: e.Project.Inputs, Hosts: e.Project.Hosts,
-				LocalSwitch: e.Project.SwitchLocal(), Editing: true,
-			}
-		}
-	}
-	res, err := tui.RunProjectForm(ctx, client, known, start, ui.StylesFor(cfg.Theme))
+	s := ui.StylesFor(cfg.Theme)
+	res, err := tui.RunProjectForm(ctx, client, known, start, s)
 	if err != nil {
 		return err
 	}
 	if !res.Saved {
-		fmt.Println(ui.StylesFor(cfg.Theme).Dim.Render("cancelled"))
+		fmt.Println(s.Dim.Render("cancelled"))
 		return nil
 	}
-	return persistProject(cfg, cat, configDir, res.Name, res.Project, res.HostDefs, false)
+	return persistProject(ctx, g, cfg, cat, configDir, res.Name, res.Project, res.HostDefs, false)
 }
 
-// persistProject writes (or, when print is set, emits) a project. Host defs go to
-// the shared index and the project file references host names; --print instead
-// inlines the resolved host defs into a self-contained block.
-func persistProject(cfg *config.Config, cat *project.Catalog, configDir, name string, p config.Project, hostDefs map[string]config.Host, print bool) error {
+// hasFieldFlags reports whether the command line defined the project itself,
+// which is what sends `add`/`edit` down the non-interactive path.
+func hasFieldFlags(g globalFlags) bool {
+	return g.inputs != "" || g.hosts != "" || len(g.hostArgs) > 0 || g.noLocalSwitch || g.localSwitch
+}
+
+// applyFieldFlags folds the definition flags into base: only what is named
+// changes, so `project edit x --hosts y` keeps x's inputs and description. `add`
+// passes an empty base, which makes the same call a plain build-from-flags.
+func applyFieldFlags(g globalFlags, base config.Project) (config.Project, map[string]config.Host, error) {
+	if g.localSwitch && g.noLocalSwitch {
+		return config.Project{}, nil, fmt.Errorf("--local-switch and --no-local-switch contradict each other")
+	}
+	hostDefs, err := parseHostArgs(g.hostArgs)
+	if err != nil {
+		return config.Project{}, nil, err
+	}
+
+	p := base
+	if g.inputs != "" {
+		p.Inputs = splitComma(g.inputs)
+	}
+	if g.hosts != "" {
+		p.Hosts = splitComma(g.hosts)
+		p.HostDefs = pruneHostDefs(p.HostDefs, p.Hosts)
+	}
+	if g.noLocalSwitch {
+		f := false
+		p.LocalSwitch = &f
+	}
+	if g.localSwitch {
+		p.LocalSwitch = nil // nil is the default, true
+	}
+	return p, hostDefs, nil
+}
+
+// pruneHostDefs drops the project's inline defs for hosts it no longer deploys,
+// so a rewritten host list does not leave dead `[hostDefs.*]` tables behind.
+func pruneHostDefs(defs map[string]config.Host, hosts []string) map[string]config.Host {
+	if len(defs) == 0 {
+		return nil
+	}
+	out := map[string]config.Host{}
+	for _, h := range hosts {
+		if d, ok := defs[h]; ok {
+			out[h] = d
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// persistProject writes (or, when print is set, emits) a project, then offers to
+// commit the files it wrote. Host defs go to the shared index and the project
+// file references host names; --print instead inlines the resolved host defs
+// into a self-contained block.
+func persistProject(ctx context.Context, g globalFlags, cfg *config.Config, cat *project.Catalog, configDir, name string, p config.Project, hostDefs map[string]config.Host, print bool) error {
 	s := ui.StylesFor(cfg.Theme)
 
 	if print {
@@ -113,12 +206,45 @@ func persistProject(cfg *config.Config, cat *project.Catalog, configDir, name st
 		return nil
 	}
 
+	path := project.FilePath(cfg.ProjectsPath(), name)
+	verb := "add"
+	if _, err := os.Stat(path); err == nil {
+		verb = "update"
+	}
 	if err := writeProject(cfg, configDir, name, p, hostDefs); err != nil {
 		return err
 	}
-	fmt.Printf("%s %s  %s\n", s.Good.Render("saved project:"), s.Value.Render(name),
-		s.Dim.Render(cfg.ProjectsPath()+"/"+name+".toml"))
+	fmt.Printf("%s %s  %s\n", s.Good.Render("saved project:"), s.Value.Render(name), s.Dim.Render(path))
+
+	offerCommit(ctx, g, s, verb, name, path, project.IndexPath(configDir))
 	return nil
+}
+
+// offerCommit offers to git-commit the definition files just written, when they
+// live in a repo and actually changed. --no-commit skips the offer, -y/--commit
+// takes it without asking, and off a terminal it stays silent. A failed commit
+// is a warning, never an error — the project is already saved either way.
+func offerCommit(ctx context.Context, g globalFlags, s ui.Styles, verb, name string, paths ...string) {
+	if g.noCommit {
+		return
+	}
+	auto := g.yes || g.commit
+	if !auto && !(isTTY(os.Stdout) && isTTY(os.Stdin)) {
+		return
+	}
+	for _, pend := range project.PendingFiles(ctx, project.CommitMessage(verb, name), paths...) {
+		if !auto {
+			ok, err := confirmDefault(s, "commit "+pend.Label()+"?", true)
+			if err != nil || !ok {
+				continue
+			}
+		}
+		if err := pend.Commit(ctx); err != nil {
+			fmt.Fprintln(os.Stderr, s.Warn.Render("! commit failed: "+err.Error()))
+			continue
+		}
+		fmt.Printf("%s %s\n", s.Good.Render("committed:"), s.Dim.Render(pend.Message))
+	}
 }
 
 // writeProject is the silent persistence core shared by `add` and the manager
@@ -167,7 +293,10 @@ func runProjectRemove(ctx context.Context, g globalFlags, args []string) error {
 	if cur, _ := project.ReadCurrent(configDir); cur == name {
 		_ = project.WriteCurrent(configDir, "")
 	}
-	fmt.Printf("%s %s\n", ui.StylesFor(cfg.Theme).Good.Render("removed project:"), name)
+	s := ui.StylesFor(cfg.Theme)
+	fmt.Printf("%s %s\n", s.Good.Render("removed project:"), name)
+	offerCommit(ctx, g, s, "remove", name,
+		project.FilePath(cfg.ProjectsPath(), name), project.IndexPath(configDir))
 	return nil
 }
 

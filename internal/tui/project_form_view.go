@@ -69,7 +69,11 @@ func (m formModel) viewInputs(s ui.Styles) string {
 		if !m.inSel[in.Name] {
 			name = s.Label.Render(in.Name)
 		}
-		fmt.Fprintf(&b, "  %s%s %s\n", cursor, box, name)
+		gone := ""
+		if m.inGone[in.Name] {
+			gone = s.Warn.Render("  (not in the flake)")
+		}
+		fmt.Fprintf(&b, "  %s%s %s%s\n", cursor, box, name, gone)
 	}
 	b.WriteString("\n")
 	return b.String()

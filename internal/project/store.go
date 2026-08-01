@@ -20,10 +20,16 @@ import (
 const indexFile = "projects.toml"
 
 const (
-	projectHeader = "# nfu project definition — `nfu project add <name>` to edit.\n\n"
+	projectHeader = "# nfu project definition — `nfu project edit <name>` to change it.\n\n"
 	indexHeader   = "# nfu projects index — shared deploy hosts + display order.\n" +
 		"# Managed by `nfu project add`; the projects/ directory is the source of truth.\n\n"
 )
+
+// FilePath returns the on-disk path of the named project's definition.
+func FilePath(dir, name string) string { return filepath.Join(dir, name+".toml") }
+
+// IndexPath returns the path of the mutable index beside the config.
+func IndexPath(configDir string) string { return filepath.Join(configDir, indexFile) }
 
 // Stored is one on-disk project definition and where it came from.
 type Stored struct {
@@ -79,7 +85,7 @@ func Save(dir, name string, p config.Project) error {
 	if err := ValidateName(name); err != nil {
 		return err
 	}
-	path := filepath.Join(dir, name+".toml")
+	path := FilePath(dir, name)
 	if fileExists(path) && isReadOnly(path) {
 		return fmt.Errorf("project %q is declared read-only (home-manager); edit programs.nfu.projects.%s, or use --print", name, name)
 	}
@@ -96,7 +102,7 @@ func Save(dir, name string, p config.Project) error {
 // Remove deletes dir/<name>.toml. It refuses to remove a read-only
 // (home-manager-declared) file.
 func Remove(dir, name string) error {
-	path := filepath.Join(dir, name+".toml")
+	path := FilePath(dir, name)
 	if !fileExists(path) {
 		return fmt.Errorf("no project file for %q at %s", name, path)
 	}
@@ -109,7 +115,7 @@ func Remove(dir, name string) error {
 // LoadIndex reads the projects index beside the config. A missing index is an
 // empty one, not an error.
 func LoadIndex(configDir string) (*Index, error) {
-	data, err := os.ReadFile(filepath.Join(configDir, indexFile))
+	data, err := os.ReadFile(IndexPath(configDir))
 	if err != nil {
 		if os.IsNotExist(err) {
 			return &Index{}, nil
@@ -135,7 +141,7 @@ func SaveIndex(configDir string, ix *Index) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(configDir, indexFile), append([]byte(indexHeader), data...), 0o644)
+	return os.WriteFile(IndexPath(configDir), append([]byte(indexHeader), data...), 0o644)
 }
 
 // MarshalProject renders a project as the top-level TOML written to a per-file

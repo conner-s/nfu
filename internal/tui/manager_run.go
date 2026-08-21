@@ -203,7 +203,7 @@ func (m *managerModel) finishRun(rs *runState, err error) tea.Cmd {
 	}
 	m.runs[rs.name] = rec
 	if m.deps.Record != nil {
-		_ = m.deps.Record(rs.name, rec) // history is best-effort, never fatal
+		_ = m.deps.Record(rs.plan, rec) // history is best-effort, never fatal
 	}
 	if err != nil {
 		return m.say("✗ "+shortErr(err), toneBad)

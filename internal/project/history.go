@@ -45,11 +45,30 @@ func LoadRuns(configDir string) (map[string]RunRecord, error) {
 // RecordRun merges one project's record into the history, creating configDir as
 // needed. Callers treat failure as best-effort (history never gates a run).
 func RecordRun(configDir, name string, rec RunRecord) error {
+	return record(configDir, rec, name)
+}
+
+// RecordPlan remembers a finished run against every project it actually covered.
+// A plan that folded several together — a bundle's `includes`, or a --merge run —
+// marks each member, so "last run" stays true for the projects a user recognizes.
+// Keying it under the synthetic "a+b+c" name instead would grow runs.toml by a
+// row per combination ever run, and leave the members looking untouched.
+func RecordPlan(configDir string, plan Plan, rec RunRecord) error {
+	if len(plan.Members) > 0 {
+		return record(configDir, rec, plan.Members...)
+	}
+	return record(configDir, rec, plan.Name)
+}
+
+// record writes one outcome under each of names in a single read-modify-write.
+func record(configDir string, rec RunRecord, names ...string) error {
 	runs, err := LoadRuns(configDir)
 	if err != nil {
 		return err
 	}
-	runs[name] = rec
+	for _, n := range names {
+		runs[n] = rec
+	}
 	if err := os.MkdirAll(configDir, 0o755); err != nil {
 		return err
 	}

@@ -29,6 +29,7 @@ func pickingModel() model {
 		checking:    map[string]bool{},
 		upstream:    map[string]flake.Input{},
 		upstreamErr: map[string]string{},
+		sem:         make(chan struct{}, probeLimit),
 	}
 }
 
@@ -163,10 +164,7 @@ func TestFetchHoveredFlow(t *testing.T) {
 		t.Fatal("f should return a fetch command")
 	}
 	// A result lands with a moved pin.
-	m = step(m, upstreamMsg{
-		names:  []string{"nixpkgs"},
-		inputs: []flake.Input{{Name: "nixpkgs", Rev: "zzz", LastModified: 1784100000}},
-	})
+	m = step(m, upstreamMsg{name: "nixpkgs", in: flake.Input{Name: "nixpkgs", Rev: "zzz", LastModified: 1784100000}})
 	if m.checking["nixpkgs"] {
 		t.Error("checking should clear once the result arrives")
 	}
@@ -208,7 +206,7 @@ func TestFetchAllMarksSelectable(t *testing.T) {
 func TestFetchErrorRecorded(t *testing.T) {
 	m := pickingModel()
 	m = step(m, key("f")) // marks nixpkgs checking
-	m = step(m, upstreamMsg{names: []string{"nixpkgs"}, err: errTestProbe})
+	m = step(m, upstreamMsg{name: "nixpkgs", err: errTestProbe})
 	if m.checking["nixpkgs"] {
 		t.Error("checking should clear even on error")
 	}
@@ -230,24 +228,24 @@ func TestFetchDedupesInFlight(t *testing.T) {
 func TestFetchAllFlow(t *testing.T) {
 	m := pickingModel()
 	m = step(m, key("F"))
-	// A whole-flake result lands carrying both real inputs (plus the follows
-	// alias's resolved pin, which must be ignored).
-	m = step(m, upstreamMsg{
-		names: []string{"nixpkgs", "totality"},
-		inputs: []flake.Input{
-			{Name: "nixpkgs", Rev: "new1"},
-			{Name: "totality", Rev: "new2"},
-			{Name: "mirror", Rev: "new1"},
-		},
-	})
+	// F is one probe PER input, so the results land separately — the first row
+	// resolves and stops spinning while the second is still in flight.
+	m = step(m, upstreamMsg{name: "nixpkgs", in: flake.Input{Name: "nixpkgs", Rev: "new1"}})
+	if m.checking["nixpkgs"] {
+		t.Error("nixpkgs should clear on its own result")
+	}
+	if !m.checking["totality"] {
+		t.Error("totality should still be in flight — its probe is separate")
+	}
+	m = step(m, upstreamMsg{name: "totality", in: flake.Input{Name: "totality", Rev: "new2"}})
 	if len(m.checking) != 0 {
-		t.Errorf("all checking should clear after the F result, got %v", m.checking)
+		t.Errorf("all checking should clear once every probe answers, got %v", m.checking)
 	}
 	if m.upstream["nixpkgs"].Rev != "new1" || m.upstream["totality"].Rev != "new2" {
-		t.Errorf("both upstream pins should be recorded from the F result: %+v", m.upstream)
+		t.Errorf("both upstream pins should be recorded: %+v", m.upstream)
 	}
 	if _, ok := m.upstream["mirror"]; ok {
-		t.Error("a follows alias must not get an upstream entry from F")
+		t.Error("a follows alias is never probed, so it must have no upstream entry")
 	}
 }
 
@@ -263,14 +261,14 @@ func TestFetchAllWhileHoveredInFlight(t *testing.T) {
 		t.Fatal("F should still fetch totality (the not-yet-probed input)")
 	}
 	// totality (from F) resolves first; nixpkgs stays checking until its own result.
-	m = step(m, upstreamMsg{names: []string{"totality"}, inputs: []flake.Input{{Name: "totality", Rev: "t"}}})
+	m = step(m, upstreamMsg{name: "totality", in: flake.Input{Name: "totality", Rev: "t"}})
 	if m.checking["totality"] {
 		t.Error("totality should clear on its result")
 	}
 	if !m.checking["nixpkgs"] {
 		t.Error("nixpkgs should stay checking until its own f result lands")
 	}
-	m = step(m, upstreamMsg{names: []string{"nixpkgs"}, inputs: []flake.Input{{Name: "nixpkgs", Rev: "n"}}})
+	m = step(m, upstreamMsg{name: "nixpkgs", in: flake.Input{Name: "nixpkgs", Rev: "n"}})
 	if m.checking["nixpkgs"] {
 		t.Error("nixpkgs should clear after its result")
 	}
@@ -294,7 +292,7 @@ func TestSpinnerTicksWhileProbing(t *testing.T) {
 func TestUpstreamMsgReanchorsNow(t *testing.T) {
 	m := pickingModel()
 	m.now = 1 // clearly stale (1970) — a long-running probe must re-anchor it
-	m = step(m, upstreamMsg{names: []string{"nixpkgs"}, inputs: []flake.Input{{Name: "nixpkgs", Rev: "z"}}})
+	m = step(m, upstreamMsg{name: "nixpkgs", in: flake.Input{Name: "nixpkgs", Rev: "z"}})
 	if m.now < 1_700_000_000 {
 		t.Errorf("upstreamMsg should re-anchor m.now to ~now, got %d", m.now)
 	}
@@ -335,5 +333,85 @@ func TestInputsLoadedTransitions(t *testing.T) {
 	m2 = step(m2, inputsLoadedMsg{inputs: []flake.Input{{Name: "x", Follows: true}}})
 	if m2.state != stateDone {
 		t.Errorf("all-follows should finish, state = %v", m2.state)
+	}
+}
+
+func TestProbeOrderStartsAtCursorAndWraps(t *testing.T) {
+	m := pickingModel() // nixpkgs, totality, mirror(follows)
+	m.cursor = 1
+	got := strings.Join(m.probeOrder(), " ")
+	// Only probeLimit probes run at once, so the hovered row must not queue last.
+	if got != "totality nixpkgs" {
+		t.Errorf("probeOrder from cursor 1 = %q, want %q", got, "totality nixpkgs")
+	}
+	m.cursor = 2 // the follows alias: skipped, but the walk still starts there
+	if got := strings.Join(m.probeOrder(), " "); got != "nixpkgs totality" {
+		t.Errorf("probeOrder from a follows row = %q", got)
+	}
+}
+
+func TestRefreshKeysProbe(t *testing.T) {
+	// `r` re-probes the hovered input; `R` re-probes every real one. Both go
+	// through the same path as f/F — the difference is nix's --refresh, which
+	// lives in the command, not the model state.
+	m := pickingModel()
+	next, cmd := m.Update(key("r"))
+	m = next.(model)
+	if !m.checking["nixpkgs"] || cmd == nil {
+		t.Errorf("r should probe the hovered input, checking=%v cmd=%v", m.checking, cmd != nil)
+	}
+
+	m = pickingModel()
+	next, cmd = m.Update(key("R"))
+	m = next.(model)
+	if !m.checking["nixpkgs"] || !m.checking["totality"] || cmd == nil {
+		t.Errorf("R should probe every real input, checking=%v", m.checking)
+	}
+	if m.checking["mirror"] {
+		t.Error("R must not probe a follows alias")
+	}
+}
+
+func TestFetchAllIsOneProbePerInput(t *testing.T) {
+	// The whole point of the split: F marks each input independently, so an
+	// error on one row leaves the others untouched instead of stamping every
+	// row with the same failure.
+	m := pickingModel()
+	m = step(m, key("F"))
+	m = step(m, upstreamMsg{name: "nixpkgs", err: errTestProbe})
+	if m.upstreamErr["nixpkgs"] == "" {
+		t.Error("the failing input should carry the error")
+	}
+	if _, ok := m.upstreamErr["totality"]; ok {
+		t.Error("one input's probe failure must not mark the others")
+	}
+	if !m.checking["totality"] {
+		t.Error("totality's own probe is still in flight")
+	}
+}
+
+func TestFetchAllIssuesOneCommandPerInput(t *testing.T) {
+	// The structural claim behind the split: `F` returns a BATCH of independent
+	// commands — one nix invocation per input — not a single whole-flake probe.
+	// Bubbletea runs each on its own goroutine, which is what makes the sweep
+	// concurrent and lets rows answer as they land.
+	m := pickingModel()
+	_, cmd := m.Update(key("F"))
+	if cmd == nil {
+		t.Fatal("F should return a command")
+	}
+	batch, ok := cmd().(tea.BatchMsg)
+	if !ok {
+		t.Fatalf("F should batch several commands, got %T", cmd())
+	}
+	// 2 real inputs (mirror is a follows alias) + the spinner tick.
+	if len(batch) != 3 {
+		t.Errorf("F issued %d commands, want 3 (one probe per real input + spinner)", len(batch))
+	}
+
+	// A second F while those are in flight adds nothing — no duplicate probes.
+	m = step(m, key("F"))
+	if _, cmd := m.Update(key("F")); cmd != nil {
+		t.Error("F with every input already in flight should issue no further probes")
 	}
 }

@@ -40,14 +40,21 @@ type updateFinishedMsg struct {
 	warn      string
 }
 
-// upstreamMsg carries the result of an upstream probe (the `f`/`F` hotkeys):
-// inputs is the whole probe lock, names is the subset that was requested (and
-// marked "checking"). A failed probe fills err and leaves inputs nil.
+// upstreamMsg carries the result of ONE input's upstream probe. Every probe is
+// its own nix invocation and its own message, so a row updates the moment its
+// own answer lands rather than waiting on the slowest input in the sweep, and a
+// remote that is down marks only the rows that actually depend on it.
 type upstreamMsg struct {
-	names  []string
-	inputs []flake.Input
-	err    error
+	name string
+	in   flake.Input
+	err  error
 }
+
+// probeLimit caps how many upstream probes run at once. Each is a short-lived
+// nix process (~40ms of startup against ~250ms of network), so the cap is about
+// the remotes, not the CPU: it keeps a wide flake from opening two dozen
+// simultaneous connections to the same few forges.
+const probeLimit = 8
 
 type model struct {
 	ctx     context.Context
@@ -64,13 +71,15 @@ type model struct {
 	selected map[int]bool
 	updating []string
 
-	// Upstream-probe state (the `f`/`F` hotkeys). checking holds inputs with an
-	// in-flight probe (drives the per-row spinner); upstream holds the resolved
-	// upstream pin by input name; upstreamErr holds a probe's error by name. All
-	// keyed by input name so a re-fetch simply overwrites.
+	// Upstream-probe state (the `f`/`F`/`r`/`R` hotkeys). checking holds inputs
+	// with an in-flight probe (drives the per-row spinner); upstream holds the
+	// resolved upstream pin by input name; upstreamErr holds a probe's error by
+	// name. All keyed by input name so a re-fetch simply overwrites. sem bounds
+	// how many probes talk to nix at once (see probeLimit).
 	checking    map[string]bool
 	upstream    map[string]flake.Input
 	upstreamErr map[string]string
+	sem         chan struct{}
 
 	results   []flake.UpdateResult
 	committed bool
@@ -104,6 +113,7 @@ func Run(ctx context.Context, client *flake.Client, commit bool, s ui.Styles) er
 		checking:    map[string]bool{},
 		upstream:    map[string]flake.Input{},
 		upstreamErr: map[string]string{},
+		sem:         make(chan struct{}, probeLimit),
 	}
 	final, err := tea.NewProgram(m, tea.WithContext(cctx)).Run()
 	if err != nil && !errors.Is(err, tea.ErrProgramKilled) && !errors.Is(err, tea.ErrInterrupted) {
@@ -142,15 +152,22 @@ func (m model) doUpdate(names []string) tea.Cmd {
 	}
 }
 
-// fetchUpstream probes the given inputs in the background and reports the result
-// keyed by those same names. names is both what nix re-locks and what the picker
-// merges, so a probe launched while another is already in flight re-fetches only
-// the not-yet-probed inputs (never a redundant whole-flake re-lock).
-func (m model) fetchUpstream(names []string) tea.Cmd {
-	client, ctx := m.client, m.ctx
+// fetchUpstream probes one input in the background and reports it under its own
+// name. Bubbletea runs each Cmd on its own goroutine, so a batch of these is
+// genuinely concurrent; m.sem bounds how many reach nix at once, and a probe
+// blocked on the semaphore holds nothing but a goroutine (its row already shows
+// "checking…", which is honest either way).
+func (m model) fetchUpstream(name string, refresh bool) tea.Cmd {
+	client, ctx, sem := m.client, m.ctx, m.sem
 	return func() tea.Msg {
-		inputs, err := client.Upstream(ctx, names...)
-		return upstreamMsg{names: names, inputs: inputs, err: err}
+		select {
+		case sem <- struct{}{}:
+			defer func() { <-sem }()
+		case <-ctx.Done():
+			return upstreamMsg{name: name, err: ctx.Err()}
+		}
+		in, err := client.Upstream(ctx, name, refresh)
+		return upstreamMsg{name: name, in: in, err: err}
 	}
 }
 
@@ -185,25 +202,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case upstreamMsg:
 		// A probe just resolved: re-anchor now so RelAge's second-precision reads
-		// true against the moment the result landed, then clear the checked names.
+		// true against the moment the result landed, then clear this input's
+		// in-flight mark. Probes land one at a time, so the row updates while its
+		// neighbours are still spinning.
 		m.now = time.Now().Unix()
-		for _, n := range msg.names {
-			delete(m.checking, n)
-		}
+		delete(m.checking, msg.name)
 		if msg.err != nil {
-			e := shortErr(msg.err)
-			for _, n := range msg.names {
-				m.upstreamErr[n] = e
-			}
+			m.upstreamErr[msg.name] = shortErr(msg.err)
 			return m, nil
 		}
-		byName := indexInputs(msg.inputs)
-		for _, n := range msg.names {
-			if up, ok := byName[n]; ok {
-				m.upstream[n] = up
-				delete(m.upstreamErr, n)
-			}
-		}
+		m.upstream[msg.name] = msg.in
+		delete(m.upstreamErr, msg.name)
 		return m, nil
 
 	case spinner.TickMsg:
@@ -252,10 +261,16 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.toggleAll()
 	case "f":
 		// Probe upstream for the hovered input only.
-		return m.startFetch(false)
+		return m.startFetch(false, false)
 	case "F":
-		// Probe upstream for every real input in one nix call.
-		return m.startFetch(true)
+		// Probe upstream for every real input, concurrently.
+		return m.startFetch(true, false)
+	case "r":
+		// Same probe, ignoring nix's caches — for a ref that moved under nix
+		// (a force-push), where the ordinary probe answers from what it holds.
+		return m.startFetch(false, true)
+	case "R":
+		return m.startFetch(true, true)
 	case "c":
 		// Flip whether a successful update also commits flake.lock. Starts from
 		// the invoked state (-c / --no-commit / config default) and overrides it
@@ -275,17 +290,20 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// startFetch kicks a background upstream probe. `f` (all==false) checks just the
-// hovered input; `F` (all==true) checks every real input. The picker stays live —
-// checked rows show a spinner until their result lands. Inputs already in flight
-// are not re-fetched (so `F` after an `f` re-locks only the remaining ones), and
-// the spinner tick loop is started only when one wasn't already running (any probe
-// keeps it alive).
-func (m model) startFetch(all bool) (tea.Model, tea.Cmd) {
+// startFetch kicks background upstream probes, ONE nix invocation per input, up
+// to probeLimit at a time. `f`/`r` (all==false) check just the hovered input;
+// `F`/`R` (all==true) check every real input; the `r` pair passes --refresh. The
+// picker stays live throughout — each checked row spins until its own answer
+// lands, and answers land independently rather than all at the end.
+//
+// Inputs already in flight are not re-probed (so `F` after an `f` covers only the
+// remaining ones), and the spinner tick loop is started only when one wasn't
+// already running (any probe keeps it alive).
+func (m model) startFetch(all, refresh bool) (tea.Model, tea.Cmd) {
 	wasChecking := len(m.checking) > 0
 	var targets []string
 	if all {
-		targets = m.selectableNames()
+		targets = m.probeOrder()
 	} else {
 		if m.cursor >= len(m.inputs) {
 			return m, nil
@@ -298,18 +316,17 @@ func (m model) startFetch(all bool) (tea.Model, tea.Cmd) {
 		targets = []string{in.Name}
 	}
 
-	var fresh []string
+	var cmds []tea.Cmd
 	for _, n := range targets {
-		if !m.checking[n] {
-			m.checking[n] = true
-			fresh = append(fresh, n)
+		if m.checking[n] {
+			continue
 		}
+		m.checking[n] = true
+		cmds = append(cmds, m.fetchUpstream(n, refresh))
 	}
-	if len(fresh) == 0 {
+	if len(cmds) == 0 {
 		return m, nil // everything requested is already being checked
 	}
-
-	cmds := []tea.Cmd{m.fetchUpstream(fresh)}
 	if !wasChecking {
 		cmds = append(cmds, m.spinner.Tick)
 	}
@@ -349,24 +366,19 @@ func (m model) selectedNames() []string {
 	return names
 }
 
-// selectableNames returns every real (non-follows) input name, the set a `F`
-// whole-flake probe answers for.
-func (m model) selectableNames() []string {
-	var names []string
-	for _, in := range m.inputs {
+// probeOrder returns every real (non-follows) input name — the set a whole-flake
+// probe answers for — starting at the cursor and wrapping. Only probeLimit run
+// at once, so the order decides which rows answer FIRST, and the row the user is
+// looking at should not be last in line behind twenty others.
+func (m model) probeOrder() []string {
+	names := make([]string, 0, len(m.inputs))
+	for off := range m.inputs {
+		in := m.inputs[(m.cursor+off)%len(m.inputs)]
 		if !in.Follows {
 			names = append(names, in.Name)
 		}
 	}
 	return names
-}
-
-func indexInputs(inputs []flake.Input) map[string]flake.Input {
-	byName := make(map[string]flake.Input, len(inputs))
-	for _, in := range inputs {
-		byName[in.Name] = in
-	}
-	return byName
 }
 
 // shortErr condenses a probe error to a single trimmed, length-capped line for

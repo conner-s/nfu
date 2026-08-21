@@ -86,6 +86,13 @@ func RenderPlan(s ui.Styles, plan Plan, root string) string {
 	var b strings.Builder
 	fmt.Fprint(&b, titleLine(s, plan.Name, root))
 
+	if len(plan.Members) > 1 {
+		// A bundle (or a --merge run): say where the one update line came from,
+		// so a long input list is attributable without opening the project files.
+		fmt.Fprintf(&b, "  %s  %s\n\n",
+			s.Label.Render("bundle"), s.Dim.Render(strings.Join(plan.Members, " + ")))
+	}
+
 	commit := "no commit"
 	if plan.Commit {
 		commit = "commit flake.lock"

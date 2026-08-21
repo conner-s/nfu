@@ -48,3 +48,16 @@ hostname = "192.168.4.100"          # no deployArgs → a bare `deploy .#Servito
 inputs      = ["totality"]
 hosts       = ["Fabricator"]        # optional; omit for a local-only project
 # localSwitch = false               # remote-only: skip `nh os switch`
+
+# A BUNDLE: a project defined by the projects it includes rather than by inputs
+# of its own. `nfu project run workstation -y` updates the union of totality's
+# and npk's inputs in ONE lock write, rebuilds the local host ONCE, and deploys
+# each host once — the shape you want when several repos moved at the same time
+# and you just want the box current. Editing totality.toml changes what this
+# covers; there is no second copy of the input list to fall behind.
+#
+# `nfu @workstation` runs the same expansion at the lock level only: it moves
+# the inputs and stops, no switch and no deploy.
+[projects.workstation]
+includes = ["totality", "npk"]
+# inputs = ["nixpkgs"]              # optional: extras this bundle adds itself

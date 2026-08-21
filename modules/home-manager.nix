@@ -13,6 +13,8 @@
 #     # Declarative deploy hosts + projects for `nfu project` (optional).
 #     hosts.Fabricator = { hostname = "192.168.4.10"; deployArgs = [ "--magic-rollback" "false" ]; };
 #     projects.totality = { inputs = [ "totality" ]; hosts = [ "Fabricator" ]; };
+#     # A bundle: one update, one rebuild, each host once.
+#     projects.workstation = { includes = [ "totality" "npk" "nfu" ]; };
 #   };
 #
 # `nfu totality` updates the totality input; `nfu project run totality` updates
@@ -46,7 +48,19 @@ let
     options = {
       inputs = lib.mkOption {
         type = lib.types.listOf lib.types.str;
-        description = "Flake inputs this project updates (at least one).";
+        default = [ ];
+        description = "Flake inputs this project updates. Required unless the project bundles others with `includes`.";
+      };
+      includes = lib.mkOption {
+        type = lib.types.listOf lib.types.str;
+        default = [ ];
+        example = [ "npk" "nfu" "totality" ];
+        description = ''
+          Other projects this one bundles. A run updates the union of their inputs
+          in one lock write, rebuilds once, and deploys each host once — editing a
+          member changes what the bundle covers, with no second copy of its input
+          list to drift.
+        '';
       };
       hosts = lib.mkOption {
         type = lib.types.listOf lib.types.str;
@@ -79,7 +93,7 @@ let
 
   # One TOML file per project (name = filename), dropping empty/unset fields.
   projectToToml = p: lib.filterAttrs (_: v: v != null && v != "" && v != [ ]) {
-    inherit (p) inputs hosts description localSwitch;
+    inherit (p) inputs includes hosts description localSwitch;
   };
   projectFiles = lib.mapAttrs'
     (name: p: lib.nameValuePair "nfu/projects/${name}.toml" {
@@ -143,6 +157,7 @@ in
         {
           totality = { inputs = [ "totality" ]; hosts = [ "Fabricator" ]; };
           inference = { inputs = [ "personal-packages" ]; hosts = [ "Fabricator" ]; localSwitch = false; };
+          workstation = { includes = [ "totality" "inference" ]; };
         }
       '';
       description = ''
@@ -164,8 +179,8 @@ in
 
     assertions = lib.mapAttrsToList
       (name: p: {
-        assertion = p.inputs != [ ];
-        message = "programs.nfu.projects.${name}: at least one input is required";
+        assertion = p.inputs != [ ] || p.includes != [ ];
+        message = "programs.nfu.projects.${name}: needs `inputs` of its own, or `includes` naming projects to bundle";
       })
       cfg.projects;
   };

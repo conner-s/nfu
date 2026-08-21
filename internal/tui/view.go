@@ -104,7 +104,7 @@ func (m model) pickView() string {
 	b.WriteString(m.commitToggle())
 	b.WriteString("\n")
 	b.WriteString(s.Help.Render(fmt.Sprintf(
-		"↑/↓ move · space select · a all · f/F upstream · c commit · enter update (%d) · q quit", n)))
+		"↑/↓ move · space select · a all · f/F upstream · r/R re-probe · c commit · enter update (%d) · q quit", n)))
 	b.WriteString("\n")
 	return b.String()
 }

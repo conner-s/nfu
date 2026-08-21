@@ -71,8 +71,17 @@ type Host struct {
 
 // Project is one update→switch→deploy pipeline definition.
 type Project struct {
-	// Inputs are the flake inputs this project updates (at least one).
-	Inputs []string `toml:"inputs"`
+	// Inputs are the flake inputs this project updates. A project needs at least
+	// one input OR one entry in Includes.
+	Inputs []string `toml:"inputs,omitempty"`
+
+	// Includes names other projects whose definitions this one absorbs: a run
+	// updates the union of every member's inputs in ONE lock write, switches
+	// once, and deploys each host once. It is how a "workstation" bundle stays
+	// drift-free — editing a member changes what the bundle updates, with no
+	// second copy of its input list to fall behind. Members may include others;
+	// a cycle is a resolution error, never a hang.
+	Includes []string `toml:"includes,omitempty"`
 
 	// Hosts are the deploy targets to activate after the local switch, in order.
 	// Each is a host name resolved through the catalog (Config.Hosts, the index,

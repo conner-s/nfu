@@ -49,8 +49,8 @@ func runProjectManager(ctx context.Context, g globalFlags) error {
 		SetCurrent: func(name string) error {
 			return project.WriteCurrent(configDir, name)
 		},
-		Record: func(name string, rec project.RunRecord) error {
-			return project.RecordRun(configDir, name, rec)
+		Record: func(plan project.Plan, rec project.RunRecord) error {
+			return project.RecordPlan(configDir, plan, rec)
 		},
 	}
 	return tui.RunManager(ctx, deps)

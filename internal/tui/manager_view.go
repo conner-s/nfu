@@ -154,7 +154,8 @@ func (m managerModel) viewProjectList(w, h int) string {
 	wName, wTarget, wLast := 4, 6, 8
 	for _, i := range rows {
 		e := m.entries[i]
-		tl, _ := targetLabel(e.Project)
+		_, hosts, localSwitch := m.shape(&e)
+		tl, _ := targetLabel(hosts, localSwitch)
 		wName = maxi(wName, utf8.RuneCountInString(e.Name))
 		wTarget = maxi(wTarget, utf8.RuneCountInString(tl))
 		wLast = maxi(wLast, utf8.RuneCountInString(m.lastRunLabel(e.Name)))
@@ -192,7 +193,8 @@ func (m managerModel) viewProjectList(w, h int) string {
 	for _, idx := range rows[top:mini(len(rows), top+visible)] {
 		e := m.entries[idx]
 		on := idx == m.sel
-		tl, tt := targetLabel(e.Project)
+		_, hosts, localSwitch := m.shape(&e)
+		tl, tt := targetLabel(hosts, localSwitch)
 		status, st := m.statusLabel(e.Name)
 		marker := " "
 		if e.Name == m.current {
@@ -208,7 +210,7 @@ func (m managerModel) viewProjectList(w, h int) string {
 			marker, cursor,
 			g.Fg.Bold(true).Render(name),
 			m.dimIf(!on, desc),
-			g.Tan.Render(padRight(fmt.Sprintf("%d", stepCount(e.Project)), wSteps)),
+			g.Tan.Render(padRight(fmt.Sprintf("%d", stepCount(hosts, localSwitch)), wSteps)),
 			m.toneStyle(tt)(padRight(tl, wTarget)),
 			g.Tan.Render(padRight(m.lastRunLabel(e.Name), wLast)),
 			m.toneStyle(st)(status),
@@ -282,7 +284,8 @@ func (m managerModel) viewProjectDetail(w, h int) string {
 	b.WriteString(g.Tan.Render(desc) + "\n\n")
 
 	// Meta box: where a run lands and what it moves.
-	tl, tt := targetLabel(e.Project)
+	inputs, hosts, localSwitch := m.shape(e)
+	tl, tt := targetLabel(hosts, localSwitch)
 	status, st := m.statusLabel(e.Name)
 	last := status
 	if rec, ok := m.runs[e.Name]; ok && !rec.At.IsZero() {
@@ -292,12 +295,20 @@ func (m managerModel) viewProjectDetail(w, h int) string {
 		}
 	}
 	kv := func(k, v string) string { return g.Gray.Render(padRight(k, 9)) + " " + v }
-	meta := strings.Join([]string{
+	// `inputs` shows what a run would MOVE (m.shape resolves a bundle's includes),
+	// and `bundle` names the members it came from, only when there are any.
+	metaRows := []string{
 		kv("flake", g.Tan.Render(m.flakeRootFor(e))),
 		kv("target", m.toneStyle(tt)(tl)),
-		kv("inputs", g.Blue.Render(strings.Join(e.Project.Inputs, ", "))),
+	}
+	if len(e.Project.Includes) > 0 {
+		metaRows = append(metaRows, kv("bundle", g.Purple.Render(strings.Join(e.Project.Includes, " + "))))
+	}
+	metaRows = append(metaRows,
+		kv("inputs", g.Blue.Render(strings.Join(inputs, ", "))),
 		kv("last run", m.toneStyle(st)(last)),
-	}, "\n")
+	)
+	meta := strings.Join(metaRows, "\n")
 	b.WriteString(g.Box.Width(leftW-2).Render(meta) + "\n\n")
 
 	// Steps timeline.

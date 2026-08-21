@@ -34,7 +34,7 @@ func runProjectAdd(ctx context.Context, g globalFlags, args []string) error {
 
 	// Flag form: name + at least one input required.
 	if name == "" {
-		return fmt.Errorf("project name required: `nfu project add <name> --inputs a,b [--hosts x,y]`")
+		return fmt.Errorf("project name required: `nfu project add <name> --inputs a,b [--hosts x,y]`, or bundle others with --includes")
 	}
 	if err := project.ValidateName(name); err != nil {
 		return err
@@ -43,8 +43,10 @@ func runProjectAdd(ctx context.Context, g globalFlags, args []string) error {
 	if err != nil {
 		return err
 	}
-	if len(p.Inputs) == 0 {
-		return fmt.Errorf("at least one input is required (--inputs a,b)")
+	if len(p.Inputs) == 0 && len(p.Includes) == 0 {
+		return fmt.Errorf("a project needs inputs of its own or projects to bundle\n" +
+			"  --inputs a,b        the flake inputs it updates\n" +
+			"  --includes x,y      other projects whose inputs it absorbs")
 	}
 	return persistProject(ctx, g, cfg, cat, configDir, name, p, hostDefs, g.print)
 }
@@ -88,7 +90,7 @@ func runProjectEdit(ctx context.Context, g globalFlags, args []string) error {
 	if !hasFieldFlags(g) && !g.print {
 		if !isTTY(os.Stdout) || !isTTY(os.Stdin) {
 			return fmt.Errorf("`project edit` with no field flags opens the builder, which needs a terminal\n" +
-				"  name what changes instead: --inputs a,b / --hosts x,y / --host-args 'H:…' / --local-switch,\n" +
+				"  name what changes instead: --inputs a,b / --includes x,y / --hosts x,y / --host-args 'H:…' / --local-switch,\n" +
 				"  or --print to dump the definition as it stands")
 		}
 		return runProjectForm(ctx, g, cfg, cat, configDir, tui.EditStart(name, e.Project))
@@ -128,7 +130,7 @@ func runProjectForm(ctx context.Context, g globalFlags, cfg *config.Config, cat 
 // hasFieldFlags reports whether the command line defined the project itself,
 // which is what sends `add`/`edit` down the non-interactive path.
 func hasFieldFlags(g globalFlags) bool {
-	return g.inputs != "" || g.hosts != "" || len(g.hostArgs) > 0 || g.noLocalSwitch || g.localSwitch
+	return g.inputs != "" || g.includes != "" || g.hosts != "" || len(g.hostArgs) > 0 || g.noLocalSwitch || g.localSwitch
 }
 
 // applyFieldFlags folds the definition flags into base: only what is named
@@ -146,6 +148,9 @@ func applyFieldFlags(g globalFlags, base config.Project) (config.Project, map[st
 	p := base
 	if g.inputs != "" {
 		p.Inputs = splitComma(g.inputs)
+	}
+	if g.includes != "" {
+		p.Includes = splitComma(g.includes)
 	}
 	if g.hosts != "" {
 		p.Hosts = splitComma(g.hosts)

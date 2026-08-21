@@ -70,11 +70,11 @@ func TestTargetLabelAndStepCount(t *testing.T) {
 		{config.Project{Inputs: []string{"a"}, LocalSwitch: boolp(false)}, "—", 1},
 	}
 	for _, c := range cases {
-		got, _ := targetLabel(c.p)
+		got, _ := targetLabel(c.p.Hosts, c.p.SwitchLocal())
 		if got != c.label {
 			t.Errorf("targetLabel(%+v) = %q, want %q", c.p, got, c.label)
 		}
-		if n := stepCount(c.p); n != c.count {
+		if n := stepCount(c.p.Hosts, c.p.SwitchLocal()); n != c.count {
 			t.Errorf("stepCount(%+v) = %d, want %d", c.p, n, c.count)
 		}
 	}
@@ -183,8 +183,9 @@ func TestKeyNavigation(t *testing.T) {
 func TestRunEventLifecycle(t *testing.T) {
 	m := testManager("nfu")
 	var recorded *project.RunRecord
-	m.deps.Record = func(name string, rec project.RunRecord) error {
-		recorded = &rec
+	var recordedPlan project.Plan
+	m.deps.Record = func(plan project.Plan, rec project.RunRecord) error {
+		recorded, recordedPlan = &rec, plan
 		return nil
 	}
 	plan := project.Plan{Name: "nfu", Inputs: []string{"nixpkgs"}, LocalSwitch: true}
@@ -215,6 +216,10 @@ func TestRunEventLifecycle(t *testing.T) {
 	}
 	if recorded == nil || recorded.OK || recorded.Detail != "updated 1" {
 		t.Fatalf("history record = %+v", recorded)
+	}
+	// The record is keyed by the plan, so a bundle/merge run can mark every member.
+	if recordedPlan.Name != "nfu" {
+		t.Errorf("recorded plan = %q, want nfu", recordedPlan.Name)
 	}
 	if got := m.runs["nfu"]; got.OK {
 		t.Fatalf("in-memory history should be failed: %+v", got)

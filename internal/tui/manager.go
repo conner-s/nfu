@@ -44,7 +44,7 @@ type Deps struct {
 	Persist    func(name string, p config.Project, defs map[string]config.Host) error
 	Reload     func() (*project.Catalog, error)
 	SetCurrent func(name string) error
-	Record     func(name string, rec project.RunRecord) error
+	Record     func(plan project.Plan, rec project.RunRecord) error
 }
 
 type mview int
@@ -648,29 +648,40 @@ func (m managerModel) toneStyle(t tone) func(...string) string {
 
 // --- misc helpers ----------------------------------------------------------
 
-// targetLabel summarizes where a project lands: the local host, ssh deploys, or
+// shape is what an entry actually runs: its flattened `includes` when it is a
+// bundle, its own fields otherwise. A bundle declares no inputs and often no
+// hosts of its own, so every listing column has to ask the resolver rather than
+// read the file, or a bundle row reads as "local, 1 step, no inputs". A project
+// that will not resolve falls back to its raw fields so the row still renders.
+func (m managerModel) shape(e *project.Entry) (inputs []string, hosts []string, localSwitch bool) {
+	if r, err := project.Resolve(m.deps.Catalog, e.Name); err == nil {
+		return r.Inputs, project.HostNames(r.Hosts), r.LocalSwitch
+	}
+	return e.Project.Inputs, e.Project.Hosts, e.Project.SwitchLocal()
+}
+
+// targetLabel summarizes where a run lands: the local host, ssh deploys, or
 // both. The second return picks the display tone (aqua local, blue remote).
-func targetLabel(p config.Project) (string, tone) {
-	local := p.SwitchLocal()
+func targetLabel(hosts []string, localSwitch bool) (string, tone) {
 	switch {
-	case local && len(p.Hosts) > 0:
-		return "local + ssh:" + strings.Join(p.Hosts, ","), toneGood
-	case local:
+	case localSwitch && len(hosts) > 0:
+		return "local + ssh:" + strings.Join(hosts, ","), toneGood
+	case localSwitch:
 		return "local", toneGood
-	case len(p.Hosts) > 0:
-		return "ssh:" + strings.Join(p.Hosts, ","), toneText
+	case len(hosts) > 0:
+		return "ssh:" + strings.Join(hosts, ","), toneText
 	default:
 		return "—", toneDim
 	}
 }
 
 // stepCount mirrors stepsForPlan without needing a resolved plan.
-func stepCount(p config.Project) int {
+func stepCount(hosts []string, localSwitch bool) int {
 	n := 1 // update
-	if p.SwitchLocal() {
+	if localSwitch {
 		n++
 	}
-	return n + len(p.Hosts)
+	return n + len(hosts)
 }
 
 func fmtDur(d time.Duration) string {

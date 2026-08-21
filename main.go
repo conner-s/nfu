@@ -6,6 +6,7 @@
 //
 //	nfu totality        update the `totality` input
 //	nfu totality npk    update several inputs in one lock write
+//	nfu @workstation    update every input a project bundle covers
 //	nfu                 interactive picker (choose inputs to update)
 //	nfu all             update every input
 //	nfu list            show inputs with their locked pins + age
@@ -33,6 +34,7 @@ const usage = `nfu — flake update helper (the piece nh is missing)
 
 usage:
   nfu <input> [<input>…]   update one or more flake inputs
+  nfu @<project>           update the inputs a project covers (lock only)
   nfu                      interactive picker (choose inputs to update)
   nfu all                  update every input
   nfu list                 show inputs with their locked pins and age
@@ -41,6 +43,7 @@ usage:
 
   nfu project                 interactive project manager (browse · run · edit)
   nfu project run [<name>…]   update → nh os switch → deploy, scoped to a project
+                              -m folds several into ONE update/switch/deploy
   nfu project add [<name>]    build a project (TUI, or --inputs/--hosts for scripts)
   nfu project edit [<name>]   change a project in the same TUI, pre-filled
   nfu project use [<name>]    set / show the current project (bare run uses it)
@@ -54,11 +57,13 @@ flags:
       --no-commit    never commit, even if the config enables it
   -n, --dry-run      show what would change; write nothing
   -y, --yes          skip the project-run confirmation prompt
+  -m, --merge        project run: fold the named projects into one pipeline
       --json         machine-readable output
   -h, --help         show this help
 
 project add / edit:
       --inputs a,b       flake inputs the project updates
+      --includes x,y     other projects to bundle (their inputs, hosts, switch)
       --hosts x,y        deploy hosts (deploy-rs nodes)
       --host-args 'H:…'  extra deploy args for host H (repeatable)
       --local-switch     run nh os switch for this project
@@ -85,9 +90,11 @@ type globalFlags struct {
 	dryRun   bool
 	asJSON   bool
 	yes      bool
+	merge    bool
 
 	// `project add` / `project edit` definition flags.
 	inputs        string
+	includes      string
 	hosts         string
 	hostArgs      stringList
 	localSwitch   bool
@@ -113,9 +120,12 @@ func addFlags(fs *flag.FlagSet, g *globalFlags) {
 	fs.BoolVar(&g.asJSON, "json", false, "machine-readable JSON")
 	fs.BoolVar(&g.yes, "yes", false, "skip the project-run confirmation prompt")
 	fs.BoolVar(&g.yes, "y", false, "skip confirmation (shorthand)")
+	fs.BoolVar(&g.merge, "merge", false, "project run: fold the named projects into one pipeline")
+	fs.BoolVar(&g.merge, "m", false, "merge (shorthand)")
 
 	// `project add` / `project edit` definition flags.
 	fs.StringVar(&g.inputs, "inputs", "", "project add/edit: comma-separated flake inputs")
+	fs.StringVar(&g.includes, "includes", "", "project add/edit: comma-separated projects to bundle")
 	fs.StringVar(&g.hosts, "hosts", "", "project add/edit: comma-separated deploy hosts")
 	fs.Var(&g.hostArgs, "host-args", "project add/edit: 'Host:--flag val' deploy args (repeatable)")
 	fs.BoolVar(&g.localSwitch, "local-switch", false, "project add/edit: run nh os switch for this project")

@@ -13,6 +13,7 @@ nfu                 interactive picker — choose inputs to update
 nfu all             update every input
 nfu list            show inputs with their locked pins and age
 nfu update <name>   explicit update verb (escape hatch for a reserved name)
+nfu @workstation    update every input a project bundle covers
 ```
 
 `all`, `list`, `ls`, `update`, and `help` are reserved as the first word; to
@@ -115,16 +116,28 @@ the read-only `nfu list`.
 **Peek upstream without updating.** `f` probes the hovered input against its
 upstream and appends the diff to that row — the new short rev with its age and
 absolute timestamp (`→ 35d3407  2 hours ago (2026-07-15 11:37)`), or `• up to
-date` if the lock already holds the tip. `F` probes every input in one pass. The
-probe never writes your `flake.lock`: it re-locks into a throwaway file (`nix
-flake update --output-lock-file`), so it shows exactly what a real update would
-land. It runs in the background — the picker stays live and each checked row
-spins until its answer arrives — so you can keep navigating or start the update.
-Because it is a real lock, a moved input is fetched to hash it (a moved `nixpkgs`
-is a full source download), which also warms nix's cache for the update that
-follows; `F` across a big flake can therefore take a while. Probing is read-only
-and orthogonal to selection: press `space` on a row after seeing its diff to
-queue it for the actual update.
+date` if the lock already holds the tip. `F` probes every input. The probe never
+writes your `flake.lock`: it re-locks into a throwaway file (`nix flake update
+--output-lock-file`), so it shows exactly what a real update would land.
+
+`F` is **one `nix` invocation per input, up to 8 at once**, starting at the row
+under the cursor and wrapping. That matters because nix locks inputs strictly
+sequentially inside a single call, and each one costs a live upstream round trip:
+asked for 22 inputs at once it pays 22 round trips back to back and can show you
+nothing until the last lands (~4.5s on a 22-input flake, versus ~0.8s split
+across 8 probes — for identical revs). Split, each row answers on its own, so the
+list fills in as the answers arrive, and a remote that is down marks only the
+rows that actually depend on it instead of stamping the same error across all 22.
+
+`r` / `R` are the same probe with nix's `--refresh`, which re-resolves ignoring
+any cached answer. You rarely need them — an ordinary probe already contacts the
+remote — but a force-pushed ref can leave nix holding content it has already
+hashed under a name that now means something else.
+
+Because a probe is a real lock, a moved input is fetched to hash it (a moved
+`nixpkgs` is a full source download), which also warms nix's cache for the update
+that follows. Probing is read-only and orthogonal to selection: press `space` on
+a row after seeing its diff to queue it for the actual update.
 
 ## List
 
@@ -144,19 +157,93 @@ nfu project run totality        # nfu totality -c → nh os switch → deploy .#
 ```
 
 Alias it to whatever's fastest to type (the design target is `npr`). A project
-names one or more **inputs**, whether to rebuild the **local** host, and an
-ordered list of deploy **hosts**. It runs fail-fast: a failed update never
-switches, and a failed local build never deploys.
+names one or more **inputs** (or other projects to bundle, see below), whether to
+rebuild the **local** host, and an ordered list of deploy **hosts**. It runs
+fail-fast: a failed update never switches, and a failed local build never
+deploys.
 
 ```
 nfu project                 full-screen project manager (browse · run · edit)
 nfu project run [<name>…]   run the pipeline (current project, or the named ones)
+nfu project run a b -m      fold several projects into ONE update/switch/deploy
 nfu project add [<name>]    build a project — a TUI, or --inputs/--hosts for scripts
 nfu project edit [<name>]   change one — the same TUI, pre-filled from the file
 nfu project use [<name>]    select the current project (bare `run` uses it), or print it
 nfu project remove <name>   delete a project
 nfu project list            show projects (current marked '*', with their source)
 ```
+
+### Bundles: several projects, one rebuild
+
+`nfu project run npk nfu nixus` runs three complete pipelines back to back —
+three `nh os switch` rebuilds and three deploy rounds to reach one state. When
+several repos moved at once (a few agents working in parallel, a workstation you
+just want current), that is the wrong shape. Two ways to get one pipeline:
+
+**Ad hoc — `-m` / `--merge`.** Fold the named projects into a single run: the
+union of their inputs in one lock write, one local rebuild, and each deploy host
+once, in first-appearance order.
+
+```
+nfu project run npk nfu nixus -m --dry-run
+```
+```
+npk+nfu+nixus  /home/you/Projects/nixos-config
+
+  bundle  npk + nfu + nixus
+
+  update  npk totality nfu nixus  (commit flake.lock)
+  switch  nh os switch
+  deploy  deploy --magic-rollback false .#Fabricator
+  deploy  deploy .#Servitor
+```
+
+It stays opt-in because the serial form does buy something real: a later project
+failing cannot un-deploy an earlier one that already landed.
+
+**Standing — `includes`.** A project defined by the projects it bundles rather
+than by inputs of its own:
+
+```toml
+# projects/workstation.toml
+description = "everything the agents touched"
+includes = ['npk', 'nfu', 'nixus']
+# inputs = ['nixpkgs']     # optional: extras this bundle adds itself
+# hosts  = ['Servitor']    # optional: extra deploy targets
+```
+
+```
+nfu project add workstation --includes npk,nfu,nixus
+nfu project run workstation
+```
+
+Editing `npk.toml` changes what `workstation` covers — there is no second copy of
+the input list to fall behind. Members may bundle other members; a cycle is a
+resolution error naming the path (`include cycle: a → b → a`), never a hang, and
+a diamond (two members bundling the same project) contributes once. How the union
+resolves:
+
+- **inputs** — deduplicated, first-appearance order, the bundle's own first.
+- **hosts** — deduplicated and deployed once, with the deploy args of whichever
+  project named the host (so a member's inline `hostDefs` still apply).
+- **localSwitch** — an explicit setting on the bundle always wins; otherwise it
+  is on when any member switches locally. A bundle over remote-only projects
+  needs no local rebuild and does not do one.
+
+**Lock only — `nfu @<project>`.** The same expansion at the update layer: move
+the inputs and stop — no switch, no deploy.
+
+```
+nfu @workstation            # = nfu npk totality nfu nixus, in one lock write
+nfu @workstation nixpkgs    # mix with plain input names; each is named once
+```
+
+The `@` sigil is what keeps this clear of the reserved-word problem: no flake
+input can be called `@workstation`, so nothing new is reserved.
+
+Run history records against every project a merged run actually covered rather
+than the synthetic `npk+nfu+nixus` name, so each member's "last run · status"
+column stays true.
 
 ### The project manager
 
@@ -221,8 +308,9 @@ source of truth (any `*.toml` there is a project); a thin `projects.toml` index
 beside it holds the shared host catalog and display order.
 
 - **`nfu project add`** with no field flags on a terminal opens the TUI (name →
-  inputs → local switch → hosts); with `--inputs a,b --hosts x,y` it takes the
-  definition from flags (the agent/scripting path). `--print` emits a
+  inputs → local switch → hosts); with `--inputs a,b --hosts x,y` — or
+  `--includes x,y` for a bundle — it takes the definition from flags (the
+  agent/scripting path). `--print` emits a
   self-contained TOML block (host defs inlined) instead of writing — paste it
   into home-manager, or hand it to someone.
 - **`nfu project edit <name>`** reopens that same builder **pre-filled** with
@@ -234,7 +322,10 @@ beside it holds the shared host catalog and display order.
 
   Where `add` replaces a definition, `edit` **merges**: `nfu project edit totality
   --hosts Servitor` changes the hosts and leaves everything else alone. Same
-  flags as `add`, plus `--local-switch` to undo a `--no-local-switch`.
+  flags as `add`, plus `--local-switch` to undo a `--no-local-switch`. The form
+  does not show `includes` — it is carried through untouched, so editing a
+  bundle's hosts in the TUI is safe; change the membership with `--includes` or
+  `E` (`$EDITOR`).
 - **home-manager** can declare hosts and projects directly (read-only files
   alongside any you `add`):
 
@@ -245,6 +336,7 @@ beside it holds the shared host catalog and display order.
     hosts.Fabricator = { hostname = "192.168.4.10"; deployArgs = [ "--magic-rollback" "false" ]; };
     projects.totality = { inputs = [ "totality" ]; hosts = [ "Fabricator" ]; };
     projects.inference = { inputs = [ "personal-packages" ]; hosts = [ "Fabricator" ]; localSwitch = false; };
+    projects.workstation = { includes = [ "totality" "inference" ]; };
   };
   ```
 

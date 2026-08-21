@@ -377,7 +377,10 @@ func (m formModel) save() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	inputs := m.selectedInputNames()
-	if len(inputs) == 0 {
+	// A bundle project gets its inputs from `includes`, which this form does not
+	// show — so requiring a selection here would make an edit to its hosts or
+	// local switch impossible without hand-editing the file.
+	if len(inputs) == 0 && len(m.base.Includes) == 0 {
 		m.err = "select at least one input (space to toggle)"
 		return m, nil
 	}

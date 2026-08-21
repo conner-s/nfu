@@ -101,6 +101,17 @@ func runProjectRun(ctx context.Context, g globalFlags, names []string) error {
 		plans = append(plans, p)
 	}
 
+	// --merge folds the named projects into ONE pipeline: a single lock write over
+	// the union of their inputs, one `nh os switch`, and each deploy host once.
+	// Without it they run back to back, which rebuilds the local host N times to
+	// reach the same state — the wrong shape for "update everything the agents
+	// touched today". It stays opt-in because the serial form does buy something
+	// real: a later project failing cannot un-deploy an earlier one that already
+	// landed.
+	if g.merge && len(plans) > 1 {
+		plans = []project.Plan{project.MergePlans(plans, commit)}
+	}
+
 	for _, p := range plans {
 		fmt.Print(project.RenderPlan(s, p, client.Root()))
 	}
@@ -135,7 +146,7 @@ func runProjectRun(ctx context.Context, g globalFlags, names []string) error {
 		res, err := project.Run(ctx, client, p, s)
 		// Record the outcome either way — the manager TUI and future lists show
 		// "last run · status" from this history. Best-effort, never fatal.
-		_ = project.RecordRun(configDir, p.Name, project.RunRecord{
+		_ = project.RecordPlan(configDir, p, project.RunRecord{
 			At: time.Now(), OK: err == nil,
 			Elapsed: int64(time.Since(start).Seconds()),
 			Detail:  summaryParts(res),
@@ -200,20 +211,34 @@ func runProjectList(ctx context.Context, g globalFlags) error {
 			Source      string   `json:"source"`
 			Current     bool     `json:"current"`
 			Inputs      []string `json:"inputs"`
+			Includes    []string `json:"includes,omitempty"`
 			Hosts       []string `json:"hosts,omitempty"`
 			LocalSwitch bool     `json:"localSwitch"`
 			Description string   `json:"description,omitempty"`
+			Error       string   `json:"error,omitempty"`
 		}
 		out := struct {
 			Current  string  `json:"current,omitempty"`
 			Projects []entry `json:"projects"`
 		}{Current: cur}
 		for _, e := range entries {
-			out.Projects = append(out.Projects, entry{
+			// `inputs` is the RESOLVED set a run would move — a bundle's own key is
+			// empty, and a consumer asking "what does this update" wants the union.
+			// `includes` keeps the declaration visible beside it. A project that will
+			// not resolve (cycle, missing member) reports the error rather than
+			// vanishing from the listing.
+			it := entry{
 				Name: e.Name, Source: e.Source, Current: e.Name == cur,
-				Inputs: e.Project.Inputs, Hosts: e.Project.Hosts,
+				Inputs: e.Project.Inputs, Includes: e.Project.Includes, Hosts: e.Project.Hosts,
 				LocalSwitch: e.Project.SwitchLocal(), Description: e.Project.Description,
-			})
+			}
+			if r, err := project.Resolve(cat, e.Name); err == nil {
+				it.Inputs, it.LocalSwitch = r.Inputs, r.LocalSwitch
+				it.Hosts = project.HostNames(r.Hosts)
+			} else {
+				it.Error = err.Error()
+			}
+			out.Projects = append(out.Projects, it)
 		}
 		return writeJSON(out)
 	}
@@ -223,12 +248,14 @@ func runProjectList(ctx context.Context, g globalFlags) error {
 		fmt.Println(s.Dim.Render("no projects yet — `nfu project add <name>` to create one"))
 		return nil
 	}
-	fmt.Print(renderProjectList(s, entries, cur))
+	fmt.Print(renderProjectList(s, cat, entries, cur))
 	return nil
 }
 
-// renderProjectList renders the aligned project table.
-func renderProjectList(s ui.Styles, entries []project.Entry, cur string) string {
+// renderProjectList renders the aligned project table. Every row shows what a
+// run would actually move — a bundle's columns come from its flattened includes,
+// not from its own (empty) input list.
+func renderProjectList(s ui.Styles, cat *project.Catalog, entries []project.Entry, cur string) string {
 	var wn int
 	for _, e := range entries {
 		if n := len(e.Name); n > wn {
@@ -241,22 +268,32 @@ func renderProjectList(s ui.Styles, entries []project.Entry, cur string) string 
 		if e.Name == cur {
 			marker = "*"
 		}
+		inputs, hostList, localSwitch := e.Project.Inputs, e.Project.Hosts, e.Project.SwitchLocal()
+		broken := ""
+		if r, err := project.Resolve(cat, e.Name); err == nil {
+			inputs, hostList, localSwitch = r.Inputs, project.HostNames(r.Hosts), r.LocalSwitch
+		} else {
+			// A row that will not resolve still lists — with why, so a bad
+			// `includes` is visible here instead of only when the run refuses.
+			broken = " ! " + err.Error()
+		}
 		hosts := "—"
-		if len(e.Project.Hosts) > 0 {
-			hosts = strings.Join(e.Project.Hosts, ", ")
+		if len(hostList) > 0 {
+			hosts = strings.Join(hostList, ", ")
 		}
 		sw := ""
-		if !e.Project.SwitchLocal() {
+		if !localSwitch {
 			sw = " (no switch)"
 		}
-		fmt.Fprintf(&b, " %s %s  %s  %s %s %s%s\n",
+		fmt.Fprintf(&b, " %s %s  %s  %s %s %s%s%s\n",
 			s.Good.Render(marker),
 			s.Value.Render(padName(e.Name, wn)),
 			s.Dim.Render("["+e.Source+"]"),
-			s.Label.Render(strings.Join(e.Project.Inputs, " ")),
+			s.Label.Render(strings.Join(inputs, " ")),
 			s.Dim.Render("→"),
 			s.Value.Render(hosts),
 			s.Dim.Render(sw),
+			s.Warn.Render(broken),
 		)
 	}
 	return b.String()

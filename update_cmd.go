@@ -29,8 +29,14 @@ func newClient(g globalFlags) (*flake.Client, *config.Config, error) {
 	return client, cfg, nil
 }
 
-// runUpdate updates the named inputs.
+// runUpdate updates the named inputs. A `@<project>` positional first expands
+// to that project's flattened input list (see expandSetRefs), so a bundle can be
+// updated without running its switch/deploy pipeline.
 func runUpdate(ctx context.Context, g globalFlags, names []string) error {
+	names, err := expandSetRefs(g, names)
+	if err != nil {
+		return err
+	}
 	client, cfg, err := newClient(g)
 	if err != nil {
 		return err

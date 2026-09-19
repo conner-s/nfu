@@ -6,8 +6,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/charmbracelet/bubbles/spinner"
-	tea "github.com/charmbracelet/bubbletea"
+	"charm.land/bubbles/v2/spinner"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"github.com/conner-s/nfu/internal/config"
 	"github.com/conner-s/nfu/internal/flake"
@@ -270,7 +271,7 @@ func TestViewSmoke(t *testing.T) {
 
 	for _, v := range []mview{mList, mDetail, mEditLoading} {
 		m.view = v
-		if out := m.View(); out == "" {
+		if out := m.View().Content; out == "" {
 			t.Fatalf("view %d rendered empty", v)
 		}
 	}
@@ -283,7 +284,7 @@ func TestViewSmoke(t *testing.T) {
 	m.view = mRun
 	for _, st := range []runStatus{runRunning, runOK, runFail, runDry} {
 		rs.status = st
-		if out := m.View(); out == "" {
+		if out := m.View().Content; out == "" {
 			t.Fatalf("run view status %d rendered empty", st)
 		}
 	}
@@ -306,7 +307,7 @@ func TestViewThemedSmoke(t *testing.T) {
 
 	for _, v := range []mview{mList, mDetail, mEditLoading} {
 		m.view = v
-		if out := m.View(); out == "" {
+		if out := m.View().Content; out == "" {
 			t.Fatalf("themed view %d rendered empty", v)
 		}
 	}
@@ -324,5 +325,51 @@ func TestDryRunPopulatesPlannedLines(t *testing.T) {
 	}
 	if !strings.HasPrefix(rs.lines[0].text, "→ nix flake update") {
 		t.Fatalf("first planned line = %q", rs.lines[0].text)
+	}
+}
+
+// lipgloss v2 counts the border inside Style.Width (v1 added it outside), so a
+// box asked for leftW must measure leftW — otherwise the meta box sits two
+// columns narrower than the column beside it and wraps early.
+func TestDetailMetaBoxMatchesColumnWidth(t *testing.T) {
+	m := testManager("nfu", "npk")
+	m.g = ui.NewGruv()
+	m.deps.Client = flake.New("/flake")
+	cfg := &config.Config{Projects: map[string]config.Project{
+		"nfu": {Inputs: []string{"nixpkgs"}, Hosts: []string{"fab"}},
+	}}
+	m.deps.Catalog = project.BuildCatalog(cfg, &project.Index{}, nil)
+	m.entries = m.deps.Catalog.List()
+	m.view = mDetail
+	m.w, m.h = 110, 32
+
+	wantW := m.w * 3 / 5
+	var got int
+	for _, line := range strings.Split(m.View().Content, "\n") {
+		i := strings.Index(line, "╭")
+		j := strings.Index(line, "╮")
+		if i < 0 || j < 0 {
+			continue
+		}
+		got = lipgloss.Width(line[i : j+len("╮")])
+		break
+	}
+	if got != wantW {
+		t.Fatalf("meta box width = %d, want %d (leftW)", got, wantW)
+	}
+}
+
+// The manager is the only nfu model that takes the alt screen. bubbletea v2
+// moved that from a program option to the view, where nothing in the old suite
+// was watching it.
+func TestAltScreenOnlyInManager(t *testing.T) {
+	if !(managerModel{}).View().AltScreen {
+		t.Error("manager must render into the alt screen")
+	}
+	if (model{}).View().AltScreen {
+		t.Error("the input picker must stay inline")
+	}
+	if (formModel{}).View().AltScreen {
+		t.Error("the project form must stay inline")
 	}
 }

@@ -6,8 +6,8 @@ import (
 	"testing"
 	"unicode/utf8"
 
-	"github.com/charmbracelet/bubbles/spinner"
-	tea "github.com/charmbracelet/bubbletea"
+	"charm.land/bubbles/v2/spinner"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/conner-s/nfu/internal/flake"
 	"github.com/conner-s/nfu/internal/ui"
@@ -33,20 +33,24 @@ func pickingModel() model {
 	}
 }
 
-func key(s string) tea.KeyMsg {
+// key builds the key press the terminal would deliver for s. Text matters as
+// much as Code: bubbletea derives String() from Text for printable keys, and
+// bubbles inserts Text and nothing else, so a Code-only press types nothing.
+func key(s string) tea.KeyPressMsg {
 	switch s {
 	case " ":
-		return tea.KeyMsg{Type: tea.KeySpace}
+		return tea.KeyPressMsg{Code: tea.KeySpace, Text: " "}
 	case "enter":
-		return tea.KeyMsg{Type: tea.KeyEnter}
+		return tea.KeyPressMsg{Code: tea.KeyEnter}
 	case "down":
-		return tea.KeyMsg{Type: tea.KeyDown}
+		return tea.KeyPressMsg{Code: tea.KeyDown}
 	case "up":
-		return tea.KeyMsg{Type: tea.KeyUp}
+		return tea.KeyPressMsg{Code: tea.KeyUp}
 	case "esc":
-		return tea.KeyMsg{Type: tea.KeyEscape}
+		return tea.KeyPressMsg{Code: tea.KeyEscape}
 	default:
-		return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(s)}
+		r := []rune(s)
+		return tea.KeyPressMsg{Code: r[0], Text: s}
 	}
 }
 
@@ -413,5 +417,30 @@ func TestFetchAllIssuesOneCommandPerInput(t *testing.T) {
 	m = step(m, key("F"))
 	if _, cmd := m.Update(key("F")); cmd != nil {
 		t.Error("F with every input already in flight should issue no further probes")
+	}
+}
+
+// Every key handler in this package switches on msg.String(). bubbletea v2
+// renamed some of those strings (" " became "space"), and the switches compile
+// either way, so pin the spellings the arms are written against.
+func TestKeyStringsMatchTheSwitchArms(t *testing.T) {
+	cases := []struct {
+		msg  tea.KeyPressMsg
+		want string
+	}{
+		{tea.KeyPressMsg{Code: tea.KeySpace, Text: " "}, "space"},
+		{tea.KeyPressMsg{Code: tea.KeyEnter}, "enter"},
+		{tea.KeyPressMsg{Code: tea.KeyEscape}, "esc"},
+		{tea.KeyPressMsg{Code: tea.KeyTab}, "tab"},
+		{tea.KeyPressMsg{Code: tea.KeyTab, Mod: tea.ModShift}, "shift+tab"},
+		{tea.KeyPressMsg{Code: 's', Mod: tea.ModCtrl}, "ctrl+s"},
+		{tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl}, "ctrl+c"},
+		{tea.KeyPressMsg{Code: tea.KeyBackspace}, "backspace"},
+		{tea.KeyPressMsg{Code: 'G', Text: "G"}, "G"},
+	}
+	for _, c := range cases {
+		if got := c.msg.String(); got != c.want {
+			t.Errorf("KeyPressMsg%+v.String() = %q, want %q", c.msg, got, c.want)
+		}
 	}
 }

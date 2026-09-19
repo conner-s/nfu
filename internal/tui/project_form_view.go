@@ -4,10 +4,19 @@ import (
 	"fmt"
 	"strings"
 
+	tea "charm.land/bubbletea/v2"
+
 	"github.com/conner-s/nfu/internal/ui"
 )
 
-func (m formModel) View() string {
+// View renders the form inline as a root program. When the manager embeds the
+// form it calls render directly, so the alt-screen decision stays with the
+// manager.
+func (m formModel) View() tea.View {
+	return tea.NewView(m.render())
+}
+
+func (m formModel) render() string {
 	if m.quit {
 		return ""
 	}

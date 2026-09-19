@@ -4,15 +4,15 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/charmbracelet/bubbles/spinner"
+	"charm.land/bubbles/v2/spinner"
 
 	"github.com/conner-s/nfu/internal/flake"
 	"github.com/conner-s/nfu/internal/ui"
 )
 
 // segModel is a bare model with a fixed clock, enough to render upstreamSegment.
-// lipgloss strips color for non-TTY test output, so substring assertions see the
-// plain glyphs/text.
+// ui.NewStyles resolves stdout's color profile, which under `go test` is NoTTY,
+// so the styles are unstyled and substring assertions see the plain glyphs/text.
 func segModel() model {
 	return model{
 		styles:      ui.NewStyles(),

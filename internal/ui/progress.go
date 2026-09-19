@@ -20,8 +20,10 @@ type Spinner struct {
 
 // StartSpinner begins animating "  <glyph> <text>" on w, redrawing the same
 // line ~10×/second until Stop. text must be a single line, pre-styled by the
-// caller. When enabled is false (stdout is not a TTY), it returns an inert
-// spinner and prints nothing, keeping piped output clean line-oriented text.
+// caller — the Styles it came from already resolved the color profile, so the
+// glyph and the text carry color only when the stream can show it. When enabled
+// is false (stdout is not a TTY), it returns an inert spinner and prints
+// nothing: the cursor games below are for a terminal, not a pipe.
 func (s Styles) StartSpinner(w io.Writer, enabled bool, text string) *Spinner {
 	if !enabled {
 		return &Spinner{}

@@ -10,8 +10,8 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/charmbracelet/bubbles/spinner"
-	tea "github.com/charmbracelet/bubbletea"
+	"charm.land/bubbles/v2/spinner"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/conner-s/nfu/internal/flake"
 	"github.com/conner-s/nfu/internal/lock"
@@ -225,7 +225,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		// Quit keys work in every state: during loading/updating they cancel the
 		// in-flight nix subprocess (raw mode means Ctrl-C is a key, not a signal).
 		switch msg.String() {
@@ -243,7 +243,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "up", "k":
 		m.cursor = clamp(m.cursor-1, 0, len(m.inputs)-1)
@@ -253,7 +253,7 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.cursor = 0
 	case "G", "end":
 		m.cursor = len(m.inputs) - 1
-	case " ", "x":
+	case "space", "x":
 		if m.cursor < len(m.inputs) && !m.inputs[m.cursor].Follows {
 			m.selected[m.cursor] = !m.selected[m.cursor]
 		}

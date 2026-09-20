@@ -6,11 +6,19 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	tea "charm.land/bubbletea/v2"
+
 	"github.com/conner-s/nfu/internal/flake"
 	"github.com/conner-s/nfu/internal/ui"
 )
 
-func (m model) View() string {
+// View renders the picker inline: it never takes the alt screen, so the final
+// frame stays in the shell scrollback like it did under bubbletea v1.
+func (m model) View() tea.View {
+	return tea.NewView(m.render())
+}
+
+func (m model) render() string {
 	s := m.styles
 	switch m.state {
 	case stateLoading:

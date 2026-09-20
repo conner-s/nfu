@@ -14,8 +14,9 @@ import (
 )
 
 // Theme is one palette. Values are lipgloss color strings: ANSI-256 codes
-// ("205") or hex ("#fe8019"); lipgloss/termenv degrades hex on non-truecolor
-// terminals.
+// ("205") or hex ("#fe8019"). Downsampling to what the terminal can show is
+// the ui package's job — it resolves a color profile once and converts every
+// slot through it (see ui.StylesFromThemeFor).
 type Theme struct {
 	Name string
 

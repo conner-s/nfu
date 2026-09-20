@@ -2,9 +2,11 @@ package tui
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/conner-s/nfu/internal/config"
 	"github.com/conner-s/nfu/internal/flake"
@@ -17,9 +19,9 @@ func formStep(m formModel, msg tea.Msg) formModel {
 }
 
 var (
-	keyTab   = tea.KeyMsg{Type: tea.KeyTab}
-	keySave  = tea.KeyMsg{Type: tea.KeyCtrlS}
-	keySpace = tea.KeyMsg{Type: tea.KeySpace}
+	keyTab   = tea.KeyPressMsg{Code: tea.KeyTab}
+	keySave  = tea.KeyPressMsg{Code: 's', Mod: tea.ModCtrl}
+	keySpace = tea.KeyPressMsg{Code: tea.KeySpace, Text: " "}
 )
 
 func editForm(t *testing.T, base config.Project) formModel {
@@ -128,5 +130,59 @@ func TestNewFormDefaults(t *testing.T) {
 	m = formStep(m, keySave) // no name, no inputs → refuses, stays open
 	if m.quit || m.err == "" {
 		t.Errorf("empty save should report an error, not quit: err=%q quit=%v", m.err, m.quit)
+	}
+}
+
+// bubbletea v2 stringifies the space bar as "space", not " ". The local-switch
+// toggle is the one switch arm no other test exercises.
+func TestSpaceTogglesLocalSwitch(t *testing.T) {
+	m := newFormModel([]flake.Input{{Name: "totality"}}, nil, FormStart{}, ui.NewStyles())
+	if !m.localSwitch {
+		t.Fatal("precondition: a new form switches the local host")
+	}
+	m.section = secSwitch
+	m = formStep(m, keySpace)
+	if m.localSwitch {
+		t.Fatal("space did not toggle localSwitch off")
+	}
+	m = formStep(m, keySpace)
+	if !m.localSwitch {
+		t.Fatal("space did not toggle localSwitch back on")
+	}
+}
+
+// bubbles v2 renders only the first placeholder rune when the input has no
+// width (bubbles#950), which turned "project-name" into "p".
+func TestPlaceholdersRenderInFull(t *testing.T) {
+	m := newFormModel([]flake.Input{{Name: "totality"}}, nil, FormStart{}, ui.NewStyles())
+	m.hostEdit = true
+	m.hName.Focus()
+	cases := map[string]string{
+		"name": ansi.Strip(m.name.View()),
+		"host": ansi.Strip(m.hName.View()),
+		"args": ansi.Strip(m.hArgs.View()),
+	}
+	want := map[string]string{"name": "project-name", "host": "host-name", "args": "--magic-rollback false"}
+	for field, got := range cases {
+		if !strings.Contains(got, want[field]) {
+			t.Errorf("%s placeholder = %q, want it to contain %q", field, got, want[field])
+		}
+	}
+}
+
+// Paste is its own message in bubbletea v2; under v1 it arrived as a key and
+// reached the text input on its own.
+func TestPasteLandsInTheFocusedInput(t *testing.T) {
+	m := newFormModel([]flake.Input{{Name: "totality"}}, nil, FormStart{}, ui.NewStyles())
+	m = formStep(m, tea.PasteMsg{Content: "abc"})
+	if m.name.Value() != "abc" {
+		t.Errorf("paste into the name field = %q, want %q", m.name.Value(), "abc")
+	}
+
+	m.hostEdit = true
+	m.hName.Focus()
+	m = formStep(m, tea.PasteMsg{Content: "Servitor"})
+	if m.hName.Value() != "Servitor" {
+		t.Errorf("paste into the host field = %q, want %q", m.hName.Value(), "Servitor")
 	}
 }

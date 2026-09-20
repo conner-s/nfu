@@ -11,8 +11,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/charmbracelet/bubbles/textinput"
-	tea "github.com/charmbracelet/bubbletea"
+	"charm.land/bubbles/v2/textinput"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/conner-s/nfu/internal/config"
 	"github.com/conner-s/nfu/internal/flake"
@@ -129,6 +129,9 @@ func newFormModel(inputs []flake.Input, known []HostOption, start FormStart, s u
 	name := textinput.New()
 	name.Placeholder = "project-name"
 	name.Prompt = ""
+	// bubbles v2 renders only the first placeholder rune when no width is set
+	// (upstream bubbles#950, still open in v2.2.1); v1 showed the whole string.
+	name.SetWidth(40)
 	name.SetValue(start.Name)
 	name.Focus()
 
@@ -179,9 +182,11 @@ func newFormModel(inputs []flake.Input, known []HostOption, start FormStart, s u
 	hn := textinput.New()
 	hn.Placeholder = "host-name"
 	hn.Prompt = ""
+	hn.SetWidth(32) // see the name field: bubbles#950
 	ha := textinput.New()
 	ha.Placeholder = "--magic-rollback false"
 	ha.Prompt = ""
+	ha.SetWidth(48) // see the name field: bubbles#950
 
 	localSwitch := true
 	if start.Editing {
@@ -208,7 +213,10 @@ func newFormModel(inputs []flake.Input, known []HostOption, start FormStart, s u
 func (m formModel) Init() tea.Cmd { return textinput.Blink }
 
 func (m formModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	key, isKey := msg.(tea.KeyMsg)
+	if paste, ok := msg.(tea.PasteMsg); ok {
+		return m.updatePaste(paste)
+	}
+	key, isKey := msg.(tea.KeyPressMsg)
 	if !isKey {
 		return m, nil
 	}
@@ -253,7 +261,7 @@ func (m formModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.updateInputs(key)
 	case secSwitch:
 		switch key.String() {
-		case " ", "enter", "left", "right", "h", "l":
+		case "space", "enter", "left", "right", "h", "l":
 			m.localSwitch = !m.localSwitch
 		}
 		return m, nil
@@ -263,13 +271,13 @@ func (m formModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m formModel) updateInputs(key tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m formModel) updateInputs(key tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch key.String() {
 	case "up", "k":
 		m.inCursor = clamp(m.inCursor-1, 0, len(m.selectableInputs())-1)
 	case "down", "j":
 		m.inCursor = clamp(m.inCursor+1, 0, len(m.selectableInputs())-1)
-	case " ", "x":
+	case "space", "x":
 		sel := m.selectableInputs()
 		if m.inCursor < len(sel) {
 			n := sel[m.inCursor].Name
@@ -279,13 +287,13 @@ func (m formModel) updateInputs(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m formModel) updateHosts(key tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m formModel) updateHosts(key tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch key.String() {
 	case "up", "k":
 		m.hCursor = clamp(m.hCursor-1, 0, len(m.hosts)-1)
 	case "down", "j":
 		m.hCursor = clamp(m.hCursor+1, 0, len(m.hosts)-1)
-	case " ", "x":
+	case "space", "x":
 		if m.hCursor < len(m.hosts) {
 			m.hosts[m.hCursor].selected = !m.hosts[m.hCursor].selected
 		}
@@ -316,7 +324,24 @@ func (m formModel) updateHosts(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m formModel) updateHostEdit(key tea.KeyMsg) (tea.Model, tea.Cmd) {
+// updatePaste forwards a bracketed paste to the focused text input. Under
+// bubbletea v1 a paste arrived as an ordinary key message and fell through to
+// the inputs on its own; v2 delivers tea.PasteMsg separately, so route it here
+// or it is silently dropped.
+func (m formModel) updatePaste(msg tea.PasteMsg) (tea.Model, tea.Cmd) {
+	var cmd tea.Cmd
+	switch {
+	case m.hostEdit && m.hName.Focused():
+		m.hName, cmd = m.hName.Update(msg)
+	case m.hostEdit:
+		m.hArgs, cmd = m.hArgs.Update(msg)
+	case m.section == secName && !m.editing:
+		m.name, cmd = m.name.Update(msg)
+	}
+	return m, cmd
+}
+
+func (m formModel) updateHostEdit(key tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch key.String() {
 	case "esc":
 		m.hostEdit = false

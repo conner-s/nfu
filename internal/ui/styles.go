@@ -1,14 +1,47 @@
 // Package ui renders nfu's terminal output. Colors come exclusively from the
 // theme registry (internal/theme) — the `theme` config key picks the palette,
-// and lipgloss auto-strips color when stdout is not a TTY, so piped and --json
-// output stays clean.
+// and every style set is built for a detected color profile, so piped, NO_COLOR
+// and --json output stays clean while a real terminal gets the palette
+// downsampled to what it can show.
 package ui
 
 import (
-	"github.com/charmbracelet/lipgloss"
+	"image/color"
+	"os"
+
+	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/colorprofile"
 
 	"github.com/conner-s/nfu/internal/theme"
 )
+
+// Profile is the color capability of the stream a style set renders to.
+// lipgloss v2 renders ANSI unconditionally — it no longer looks at the
+// terminal — so nfu resolves the profile once, here, and bakes it into the
+// styles. Everything downstream stays a plain fmt.Fprint of a rendered string.
+type Profile = colorprofile.Profile
+
+// DetectProfile reports stdout's color profile: NoTTY when stdout is a pipe or
+// a file, ASCII when NO_COLOR or a dumb terminal says "no color", otherwise the
+// richest of what $TERM, terminfo and tmux support.
+func DetectProfile() Profile {
+	return colorprofile.Detect(os.Stdout, os.Environ())
+}
+
+// colorer maps theme color strings onto a profile: hex downsamples to 256 or
+// 16 colors, and a profile with no color at all yields nil (an unset
+// foreground), which renders no escape sequence.
+func colorer(p Profile) func(string) color.Color {
+	if p <= colorprofile.ASCII {
+		return func(string) color.Color { return nil }
+	}
+	return func(v string) color.Color { return p.Convert(lipgloss.Color(v)) }
+}
+
+// attrs reports whether the profile renders SGR attributes (color, bold) at
+// all. Structural attributes — borders, padding, width — always render; that
+// is the split lipgloss v1 made for us automatically.
+func attrs(p Profile) bool { return p > colorprofile.ASCII }
 
 // Styles centralizes lipgloss styling so callers stay declarative.
 type Styles struct {
@@ -39,10 +72,24 @@ func StylesFor(name string) Styles {
 	return StylesFromTheme(t)
 }
 
-// StylesFromTheme maps a theme onto the line-oriented style set. Structural
-// attributes (bold) live here on purpose: themes recolor, they do not relayout.
+// StylesFromTheme maps a theme onto the line-oriented style set for stdout's
+// detected profile.
 func StylesFromTheme(t theme.Theme) Styles {
-	c := func(v string) lipgloss.Color { return lipgloss.Color(v) }
+	return StylesFromThemeFor(t, DetectProfile())
+}
+
+// StylesFromThemeFor is StylesFromTheme against an explicit profile. Emphasis
+// (bold) lives here on purpose: themes recolor, they do not relayout. A
+// profile with no color drops it too, which is what lipgloss v1 did on a pipe.
+func StylesFromThemeFor(t theme.Theme, p Profile) Styles {
+	if !attrs(p) {
+		plain := lipgloss.NewStyle()
+		return Styles{
+			Title: plain, Label: plain, Value: plain, Dim: plain,
+			Good: plain, Warn: plain, Bad: plain, Help: plain,
+		}
+	}
+	c := colorer(p)
 	return Styles{
 		Title: lipgloss.NewStyle().Bold(true).Foreground(c(t.Title)),
 		Label: lipgloss.NewStyle().Foreground(c(t.Label)),
@@ -103,9 +150,29 @@ func GruvFor(name string) Gruv {
 	return GruvFromTheme(t)
 }
 
-// GruvFromTheme maps a theme onto the manager style set.
+// GruvFromTheme maps a theme onto the manager style set for stdout's detected
+// profile.
 func GruvFromTheme(t theme.Theme) Gruv {
-	c := func(v string) lipgloss.Style { return lipgloss.NewStyle().Foreground(lipgloss.Color(v)) }
+	return GruvFromThemeFor(t, DetectProfile())
+}
+
+// GruvFromThemeFor is GruvFromTheme against an explicit profile. Box keeps its
+// border and padding at every profile — those are layout, not color, and the
+// views measure them.
+func GruvFromThemeFor(t theme.Theme, p Profile) Gruv {
+	box := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(0, 1)
+	badge := lipgloss.NewStyle().Padding(0, 1)
+	if !attrs(p) {
+		plain := lipgloss.NewStyle()
+		return Gruv{
+			Orange: plain, Yellow: plain, Green: plain, Red: plain,
+			Blue: plain, Aqua: plain, Purple: plain, Fg: plain,
+			Tan: plain, Gray: plain, Dim: plain, Faint: plain,
+			Sel: plain, Badge: badge, Box: box,
+		}
+	}
+	col := colorer(p)
+	c := func(v string) lipgloss.Style { return lipgloss.NewStyle().Foreground(col(v)) }
 	return Gruv{
 		Orange: c(t.Accent),
 		Yellow: c(t.Warn),
@@ -119,8 +186,8 @@ func GruvFromTheme(t theme.Theme) Gruv {
 		Gray:   c(t.Label),
 		Dim:    c(t.Dim),
 		Faint:  c(t.Faint),
-		Sel:    lipgloss.NewStyle().Background(lipgloss.Color(t.SelBg)).Foreground(lipgloss.Color(t.Value)),
-		Badge:  lipgloss.NewStyle().Background(lipgloss.Color(t.Accent)).Foreground(lipgloss.Color(t.BadgeFg)).Bold(true).Padding(0, 1),
-		Box:    lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color(t.Border)).Padding(0, 1),
+		Sel:    lipgloss.NewStyle().Background(col(t.SelBg)).Foreground(col(t.Value)),
+		Badge:  badge.Background(col(t.Accent)).Foreground(col(t.BadgeFg)).Bold(true),
+		Box:    box.BorderForeground(col(t.Border)),
 	}
 }

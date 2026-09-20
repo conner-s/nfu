@@ -18,9 +18,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/bubbles/spinner"
-	"github.com/charmbracelet/bubbles/textinput"
-	tea "github.com/charmbracelet/bubbletea"
+	"charm.land/bubbles/v2/spinner"
+	"charm.land/bubbles/v2/textinput"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/conner-s/nfu/internal/config"
 	"github.com/conner-s/nfu/internal/flake"
@@ -195,7 +195,7 @@ func RunManager(ctx context.Context, deps Deps) error {
 	if m.runs == nil {
 		m.runs = map[string]project.RunRecord{}
 	}
-	final, err := tea.NewProgram(m, tea.WithContext(cctx), tea.WithAltScreen()).Run()
+	final, err := tea.NewProgram(m, tea.WithContext(cctx)).Run()
 	if err != nil && !errors.Is(err, tea.ErrProgramKilled) && !errors.Is(err, tea.ErrInterrupted) {
 		return err
 	}
@@ -261,7 +261,7 @@ func (m managerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case runStepStartMsg, runLineMsg, runStepEndMsg, runEndMsg:
 		return m.handleRunEvent(msg)
 
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		return m.handleKey(msg)
 	}
 
@@ -279,7 +279,7 @@ func (m managerModel) spinnerLive() bool {
 	return m.run != nil && m.run.status == runRunning
 }
 
-func (m managerModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m managerModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	// A running pipeline owns Ctrl-C: it cancels the run, not the program.
 	if msg.String() == "ctrl+c" && m.view == mRun && m.run != nil && m.run.status == runRunning {
 		return m.cancelRun()
@@ -308,7 +308,7 @@ func (m managerModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m managerModel) keyList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m managerModel) keyList(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if m.filterOn {
 		switch msg.String() {
 		case "esc":
@@ -321,8 +321,11 @@ func (m managerModel) keyList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			m.snapSelection()
 		default:
-			if r := msg.Runes; len(r) == 1 {
-				m.filter += string(r)
+			// bubbletea v2 carries the printable text of a key press in Text
+			// (empty for pure modifiers and named keys); pastes arrive as a
+			// separate tea.PasteMsg and never reach handleKey, as under v1.
+			if t := msg.Text; t != "" {
+				m.filter += t
 				m.snapSelection()
 			}
 		}
@@ -367,7 +370,7 @@ func (m managerModel) keyList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m managerModel) keyDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m managerModel) keyDetail(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "esc", "q", "h", "left":
 		if msg.String() == "h" || msg.String() == "left" {
@@ -395,7 +398,7 @@ func (m managerModel) keyDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m managerModel) keyRun(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m managerModel) keyRun(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	r := m.run
 	if r == nil {
 		m.view = mList

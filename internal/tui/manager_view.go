@@ -10,13 +10,22 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/charmbracelet/lipgloss"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"github.com/conner-s/nfu/internal/project"
 	"github.com/conner-s/nfu/internal/ui"
 )
 
-func (m managerModel) View() string {
+// View renders the manager into the alt screen — this is the one nfu model
+// that takes it (bubbletea v2 replaced tea.WithAltScreen with this field).
+func (m managerModel) View() tea.View {
+	v := tea.NewView(m.render())
+	v.AltScreen = true
+	return v
+}
+
+func (m managerModel) render() string {
 	if m.quit {
 		return ""
 	}
@@ -31,7 +40,9 @@ func (m managerModel) View() string {
 		body = m.viewRun(w, h)
 	case mEdit:
 		if m.form != nil {
-			body = m.form.View()
+			// The form is also a root program elsewhere; embedded here it must
+			// contribute a body, not its own tea.View.
+			body = m.form.render()
 		}
 	case mEditLoading:
 		body = fmt.Sprintf("\n  %s %s\n", m.spin.View(), m.g.Dim.Render("reading flake inputs…"))
@@ -309,7 +320,7 @@ func (m managerModel) viewProjectDetail(w, h int) string {
 		kv("last run", m.toneStyle(st)(last)),
 	)
 	meta := strings.Join(metaRows, "\n")
-	b.WriteString(g.Box.Width(leftW-2).Render(meta) + "\n\n")
+	b.WriteString(g.Box.Width(leftW).Render(meta) + "\n\n")
 
 	// Steps timeline.
 	plan, err := project.BuildPlan(m.deps.Catalog, e.Name, m.deps.Commit)
@@ -461,7 +472,7 @@ func (m managerModel) viewRun(w, h int) string {
 		g.Gray.Render("elapsed ") + g.Fg.Render(fmtDur(rs.elapsed)),
 		g.Gray.Render("status  ") + statusStyle.Render(statusTxt),
 	}, "\n")
-	side.WriteString("\n" + g.Box.Width(sideW-2).Render(info))
+	side.WriteString("\n" + g.Box.Width(sideW).Render(info))
 
 	// Right: the current step's header and its log tail (a dry run shows every
 	// step's would-be command instead).

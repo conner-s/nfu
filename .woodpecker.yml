@@ -21,7 +21,7 @@ when:
 
 variables:
   # Pin the Nix image so CI is reproducible; bump deliberately, not via :latest.
-  - &nix_image nixos/nix:2.24.9
+  - &nix_image nixos/nix:2.35.2
   - &enable_flakes |
       mkdir -p /etc/nix
       printf 'experimental-features = nix-command flakes\naccept-flake-config = true\n' >> /etc/nix/nix.conf

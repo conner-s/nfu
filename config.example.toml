@@ -36,11 +36,11 @@ commit = false
 # declare them via the home-manager module — see the README).
 
 [hosts.Fabricator]
-hostname   = "192.168.4.10"
+hostname   = "192.0.2.10"
 deployArgs = ["--magic-rollback", "false"]
 
 [hosts.Servitor]
-hostname = "192.168.4.100"          # no deployArgs → a bare `deploy .#Servitor`
+hostname = "192.0.2.100"            # no deployArgs → a bare `deploy .#Servitor`
 
 # An inline project (equivalently: projects/totality.toml with these keys, minus
 # the [projects.totality] wrapper):

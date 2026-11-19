@@ -16,12 +16,12 @@ These are the defaults; nothing has been renamed to match an existing vocabulary
 
 ## Creating the labels
 
-All five labels exist in `connerlab/nfu`. If one goes missing, recreate it
-with `fj`:
+All five labels exist in this repository on its home forge. If one goes
+missing, recreate it with `fj`, run inside the clone:
 
 ```
-fj repo labels connerlab/nfu view
-fj repo labels connerlab/nfu create needs-triage d93f0b -d "Maintainer needs to evaluate this issue"
+fj repo labels view
+fj repo labels create needs-triage d93f0b -d "Maintainer needs to evaluate this issue"
 ```
 
 `/wayfinder` also uses `wayfinder:map`, `wayfinder:research`,

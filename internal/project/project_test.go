@@ -89,7 +89,7 @@ func TestIndexRoundTrip(t *testing.T) {
 	}
 	ix = &Index{
 		Order: []string{"totality", "inference"},
-		Hosts: map[string]config.Host{"Fabricator": {Hostname: "192.168.4.10", DeployArgs: []string{"--magic-rollback", "false"}}},
+		Hosts: map[string]config.Host{"Fabricator": {Hostname: "192.0.2.10", DeployArgs: []string{"--magic-rollback", "false"}}},
 	}
 	if err := SaveIndex(dir, ix); err != nil {
 		t.Fatal(err)
@@ -102,7 +102,7 @@ func TestIndexRoundTrip(t *testing.T) {
 		t.Errorf("Order = %v", got.Order)
 	}
 	h := got.Hosts["Fabricator"]
-	if h.Hostname != "192.168.4.10" || len(h.DeployArgs) != 2 {
+	if h.Hostname != "192.0.2.10" || len(h.DeployArgs) != 2 {
 		t.Errorf("Hosts[Fabricator] = %+v", h)
 	}
 }

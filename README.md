@@ -333,7 +333,7 @@ beside it holds the shared host catalog and display order.
   programs.nfu = {
     enable = true;
     settings = { flakeRoot = "~/Projects/nixos-config"; commit = false; };
-    hosts.Fabricator = { hostname = "192.168.4.10"; deployArgs = [ "--magic-rollback" "false" ]; };
+    hosts.Fabricator = { hostname = "192.0.2.10"; deployArgs = [ "--magic-rollback" "false" ]; };
     projects.totality = { inputs = [ "totality" ]; hosts = [ "Fabricator" ]; };
     projects.inference = { inputs = [ "personal-packages" ]; hosts = [ "Fabricator" ]; localSwitch = false; };
     projects.workstation = { includes = [ "totality" "inference" ]; };

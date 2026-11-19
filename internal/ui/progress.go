@@ -36,7 +36,7 @@ func (s Styles) StartSpinner(w io.Writer, enabled bool, text string) *Spinner {
 		for i := 0; ; i++ {
 			// \r + erase-line: redraw in place without stair-stepping when the
 			// new frame is shorter than the last.
-			fmt.Fprintf(w, "\r\x1b[2K  %s %s", s.Warn.Render(spinnerFrames[i%len(spinnerFrames)]), text)
+			Fprintf(w, "\r\x1b[2K  %s %s", s.Warn.Render(spinnerFrames[i%len(spinnerFrames)]), text)
 			select {
 			case <-sp.stop:
 				fmt.Fprint(w, "\r\x1b[2K")

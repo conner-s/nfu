@@ -34,6 +34,12 @@ type Config struct {
 	// terminal's scheme. Validated at load: a typo fails with the valid set.
 	Theme string `toml:"theme"`
 
+	// Charset says what the terminal decodes: "auto" (the default: go by the
+	// locale), "utf8" or "ascii". Where the terminal is not known to decode
+	// UTF-8, nfu draws ASCII only. The --charset flag overrides it per run.
+	// Validated at load.
+	Charset string `toml:"charset"`
+
 	// ProjectsDir is where the per-file project definitions live. A leading ~ is
 	// expanded; when unset it defaults to the "projects" directory beside this
 	// config file (see ProjectsDir). Point it at a git-tracked directory to
@@ -148,6 +154,11 @@ func Load(path string) (*Config, error) {
 	}
 	if _, err := theme.Get(c.Theme); err != nil {
 		return nil, fmt.Errorf("config %s: %w", path, err)
+	}
+	switch strings.ToLower(c.Charset) {
+	case "", "auto", "utf8", "utf-8", "ascii":
+	default:
+		return nil, fmt.Errorf("config %s: charset must be auto, utf8 or ascii, not %q", path, c.Charset)
 	}
 	c.path = path
 	c.FlakeRoot = expandTilde(c.FlakeRoot)

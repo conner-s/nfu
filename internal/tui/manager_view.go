@@ -27,7 +27,7 @@ import (
 // View renders the manager into the alt screen — this is the one nfu model
 // that takes it (bubbletea v2 replaced tea.WithAltScreen with this field).
 func (m managerModel) View() tea.View {
-	v := tea.NewView(m.render())
+	v := tea.NewView(ui.Own(m.render()))
 	v.AltScreen = true
 	return v
 }
@@ -53,6 +53,15 @@ func (m managerModel) render() string {
 		}
 	case mEditLoading:
 		body = fmt.Sprintf("\n  %s %s\n", m.spin.View(), m.g.Dim.Render("reading flake inputs…"))
+	}
+	// The alternate screen hides what main printed, so the warning that the
+	// terminal is not known to decode UTF-8 is repeated at the top of it.
+	if lines := ui.TerminalBanner(w - 2); len(lines) > 0 {
+		var top strings.Builder
+		for _, l := range lines {
+			top.WriteString(" " + m.g.Yellow.Render(l) + "\n")
+		}
+		body = top.String() + body
 	}
 	footer := m.viewFooter(w)
 	// Pin the footer to the bottom of the alt screen.
@@ -465,7 +474,7 @@ func (m managerModel) viewTomlPane(e *project.Entry, w int) string {
 // tomlLines cleans a marshalled project and splits it into lines. Cleaning
 // comes first: a lone carriage return is a line break too.
 func tomlLines(data []byte) []termsafe.Text {
-	text := termsafe.Mark.Clean(strings.TrimRight(string(data), "\n"))
+	text := ui.Fit(termsafe.Mark.Clean(strings.TrimRight(string(data), "\n")))
 	parts := strings.Split(text.String(), "\n")
 	lines := make([]termsafe.Text, len(parts))
 	for i, p := range parts {

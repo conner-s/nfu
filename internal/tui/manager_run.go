@@ -230,15 +230,8 @@ func runEngine(ctx context.Context, client *flake.Client, plan project.Plan, ch 
 	say := func(step int, t tone, text termsafe.Text) {
 		emit(runLineMsg{step: step, text: text, tone: t})
 	}
-	// logLine takes one line of a child's output. A control string without a
-	// terminator took the rest of its line with it; say so under that line.
 	logLine := func(step int) func(termsafe.Text, termsafe.Report) {
-		return func(l termsafe.Text, rep termsafe.Report) {
-			say(step, toneDim, l)
-			if note := ui.CutNote(rep.Unterminated); !note.IsEmpty() {
-				say(step, toneWarn, note)
-			}
-		}
+		return childLine(step, emit)
 	}
 	var (
 		moved    int
@@ -345,4 +338,17 @@ func failLines(err error) []runLineMsg {
 func (l runLineMsg) at(step int) runLineMsg {
 	l.step = step
 	return l
+}
+
+// childLine returns what proc.RunLines calls for each line of a child's
+// output: it sends the line to the run log, fitted to the terminal, and when a
+// control string without a terminator took the rest of the line with it, says
+// so under it.
+func childLine(step int, emit func(tea.Msg)) func(termsafe.Text, termsafe.Report) {
+	return func(l termsafe.Text, rep termsafe.Report) {
+		emit(runLineMsg{step: step, text: ui.Fit(l), tone: toneDim})
+		if note := ui.CutNote(rep.Unterminated); !note.IsEmpty() {
+			emit(runLineMsg{step: step, text: note, tone: toneWarn})
+		}
+	}
 }

@@ -119,7 +119,7 @@ type streamReporter struct {
 }
 
 func (r *streamReporter) Plan(names []string) {
-	fmt.Print(titleLine(r.s, r.root))
+	ui.Fprint(os.Stdout, titleLine(r.s, r.root))
 	for _, n := range names {
 		r.wn = max(r.wn, utf8.RuneCountInString(ui.Name(n).String()))
 	}
@@ -133,7 +133,7 @@ func (r *streamReporter) Start(name string) {
 func (r *streamReporter) Done(res flake.UpdateResult) {
 	r.sp.Stop()
 	r.sp, r.current = nil, ""
-	fmt.Print(ui.RenderResultRow(r.s, ui.NewResultRow(res), r.wn, r.now))
+	ui.Fprint(os.Stdout, ui.RenderResultRow(r.s, ui.NewResultRow(res), r.wn, r.now))
 }
 
 // finish clears any in-flight spinner; when the run failed mid-input, the
@@ -144,7 +144,7 @@ func (r *streamReporter) finish(failed bool) {
 		r.sp = nil
 	}
 	if failed && r.current != "" {
-		fmt.Print(ui.RenderFailedRow(r.s, ui.Name(r.current), r.wn))
+		ui.Fprint(os.Stdout, ui.RenderFailedRow(r.s, ui.Name(r.current), r.wn))
 	}
 }
 
@@ -192,9 +192,9 @@ func previewUpdate(ctx context.Context, g globalFlags, cfg *config.Config, clien
 		return writeJSON(out)
 	}
 	s := ui.StylesFor(cfg.Theme)
-	fmt.Print(titleLine(s, client.Root()))
-	fmt.Print(ui.RenderInputList(s, ui.InputRows(inputs), now))
-	fmt.Printf("\n%s %s\n", s.Dim.Render("would run"),
+	ui.Fprint(os.Stdout, titleLine(s, client.Root()))
+	ui.Fprint(os.Stdout, ui.RenderInputList(s, ui.InputRows(inputs), now))
+	ui.Fprintf(os.Stdout, "\n%s %s\n", s.Dim.Render("would run"),
 		s.Value.Render(ui.Linef("nix flake update -- %s", ui.Names(names, " ")).String()))
 	return nil
 }
@@ -214,20 +214,20 @@ func emitFooter(out, errOut io.Writer, s ui.Styles, results []flake.UpdateResult
 			moved++
 		}
 	}
-	fmt.Fprintln(out)
+	ui.Fprintln(out)
 	switch {
 	case updErr != nil:
-		fmt.Fprintln(out, s.Bad.Render("update did not complete"))
+		ui.Fprintln(out, s.Bad.Render("update did not complete"))
 	case moved == 0:
-		fmt.Fprintln(out, s.Dim.Render("everything already up to date"))
+		ui.Fprintln(out, s.Dim.Render("everything already up to date"))
 	default:
-		fmt.Fprintln(out, s.Value.Render(fmt.Sprintf("updated %s", countInputs(moved))))
+		ui.Fprintln(out, s.Value.Render(fmt.Sprintf("updated %s", countInputs(moved))))
 	}
 	if committed {
-		fmt.Fprintf(out, "%s %s\n", s.Good.Render("committed flake.lock:"), s.Dim.Render(commitMsg.String()))
+		ui.Fprintf(out, "%s %s\n", s.Good.Render("committed flake.lock:"), s.Dim.Render(commitMsg.String()))
 	}
 	if !warn.IsEmpty() {
-		fmt.Fprintln(errOut, s.Warn.Render("! "+warn.String()))
+		ui.Fprintln(errOut, s.Warn.Render("! "+warn.String()))
 	}
 }
 

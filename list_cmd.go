@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"time"
 
@@ -40,8 +39,8 @@ func runList(ctx context.Context, g globalFlags) error {
 		return writeJSON(out)
 	}
 	s := ui.StylesFor(cfg.Theme)
-	fmt.Print(titleLine(s, client.Root()))
-	fmt.Print(ui.RenderInputList(s, ui.InputRows(inputs), time.Now().Unix()))
+	ui.Fprint(os.Stdout, titleLine(s, client.Root()))
+	ui.Fprint(os.Stdout, ui.RenderInputList(s, ui.InputRows(inputs), time.Now().Unix()))
 	return nil
 }
 

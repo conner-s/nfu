@@ -618,6 +618,7 @@ func (m *managerModel) showForm() tea.Cmd {
 		}
 	}
 	fm := newFormModel(m.inputs, known, start, ui.StylesFor(m.deps.Theme))
+	fm.embedded = true
 	m.form = &fm
 	m.view = mEdit
 	return textinput.Blink

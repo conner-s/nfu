@@ -253,9 +253,11 @@ func lockInputs(text string) []flake.Input {
 // nixError is an error as internal/flake returns one: nix's stderr, whole.
 func nixError(text string) error {
 	return &flake.CmdError{
-		Name:   "nix",
-		Err:    errors.New("exit status 1"),
-		Stderr: []byte("error: " + text + "\n       second line " + text),
+		Name: "nix",
+		Err:  errors.New("exit status 1"),
+		// No "error: " in front: a row marker is clipped to 64 characters, and
+		// on a terminal that is not UTF-8 a sample's characters are eight each.
+		Stderr: []byte(text + "\n       second line " + text),
 	}
 }
 
@@ -353,12 +355,8 @@ func childOutput(t *testing.T, lines ...string) []tea.Msg {
 		t.Fatal(err)
 	}
 	var msgs []tea.Msg
-	err := proc.RunLines(context.Background(), dir, func(l termsafe.Text, rep termsafe.Report) {
-		msgs = append(msgs, runLineMsg{step: 0, text: l, tone: toneDim})
-		if note := ui.CutNote(rep.Unterminated); !note.IsEmpty() {
-			msgs = append(msgs, runLineMsg{step: 0, text: note, tone: toneWarn})
-		}
-	}, "cat", file)
+	err := proc.RunLines(context.Background(), dir,
+		childLine(0, func(msg tea.Msg) { msgs = append(msgs, msg) }), "cat", file)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -522,6 +520,94 @@ func TestProgram_HostileTextNeverReachesTheTerminal(t *testing.T) {
 					t.Error(p)
 				}
 			})
+		}
+	}
+}
+
+// The same two tests on a terminal that is not known to decode UTF-8. There
+// the bytes of ordinary characters are controls, so besides everything above,
+// not one byte outside ASCII may be in a view or reach the terminal: not in
+// the outside text, which is drawn in its ASCII form, and not in nfu's own
+// drawing, whose glyphs, borders and spinners give way to ASCII ones.
+
+func TestView_HostileText_NotUTF8(t *testing.T) {
+	defer ui.SetTerminal(notUTF8Terminal)()
+	for _, e := range entries {
+		for _, h := range termsafe.Samples() {
+			t.Run(e.name+"/"+h.Name, func(t *testing.T) {
+				content := e.build(t, h.Text).View().Content
+				if want := proof(h.Text, e.pin); want == "" || !strings.Contains(content, want) {
+					t.Fatalf("the text is not drawn at all (no %q):\n%q", want, content)
+				}
+				if p := termsafe.ViewProblem(judged(content, e.pin)); !allowed(p, content, e.quoted) {
+					t.Errorf("%s:\n%q", p, content)
+				}
+				if p := termsafe.ASCIIProblem(content); p != "" {
+					t.Errorf("%s:\n%q", p, content)
+				}
+			})
+		}
+	}
+}
+
+func TestProgram_HostileTextNeverReachesTheTerminal_NotUTF8(t *testing.T) {
+	defer ui.SetTerminal(notUTF8Terminal)()
+	for _, e := range entries {
+		for _, h := range termsafe.Samples() {
+			t.Run(e.name+"/"+h.Name, func(t *testing.T) {
+				width := 120
+				if e.narrow {
+					width = 60
+				}
+				written := terminalBytes(t, e.build(t, h.Text), proof(h.Text, e.pin), width)
+				if p := termsafe.TerminalProblem(judged(written, e.pin)); !allowed(p, written, e.quoted) {
+					t.Error(p)
+				}
+				if p := termsafe.ASCIIProblem(written); p != "" {
+					t.Error(p)
+				}
+			})
+		}
+	}
+}
+
+// The warning is at the top of every TUI on such a terminal, and on none
+// that decodes UTF-8. In the manager, which takes the whole screen, it is
+// wrapped to the width; the form does not repeat it inside the manager.
+func TestTerminalBannerInEveryTUI(t *testing.T) {
+	const words = "this terminal is not known to decode UTF-8"
+	views := map[string]func() string{
+		"picker":  func() string { return loaded(t, flake.Input{Name: "nixpkgs", Rev: "old"}).View().Content },
+		"manager": func() string { return managing(t, plainConfig(), mList).View().Content },
+		"form": func() string {
+			return newFormModel([]flake.Input{{Name: "nixpkgs"}}, nil, FormStart{}, ui.NewStyles()).View().Content
+		},
+	}
+	for name, view := range views {
+		if strings.Contains(view(), words) {
+			t.Errorf("%s: the warning is shown on a UTF-8 terminal", name)
+		}
+	}
+	defer ui.SetTerminal(notUTF8Terminal)()
+	for name, view := range views {
+		got := view()
+		if n := strings.Count(strings.Join(strings.Fields(got), " "), words); n != 1 {
+			t.Errorf("%s: the warning is shown %d times, want once:\n%s", name, n, got)
+		}
+		if !strings.Contains(strings.Join(strings.Fields(got), " "), "--charset=utf8") {
+			t.Errorf("%s: the warning does not say how to overrule it:\n%s", name, got)
+		}
+	}
+	m := managing(t, plainConfig(), mList)
+	m.inputs, m.inputsLoaded = []flake.Input{{Name: "nixpkgs"}}, true
+	m.editingNew = true
+	m.showForm()
+	if n := strings.Count(strings.Join(strings.Fields(m.View().Content), " "), words); n != 1 {
+		t.Errorf("the form inside the manager: the warning is shown %d times, want once", n)
+	}
+	for _, line := range strings.Split(m.View().Content, "\n") {
+		if len(line) > m.w {
+			t.Errorf("a line of the manager is wider than the screen (%d > %d): %q", len(line), m.w, line)
 		}
 	}
 }

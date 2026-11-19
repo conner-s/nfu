@@ -48,6 +48,21 @@ The flake root is resolved in order: `--flake PATH` → config `flakeRoot` →
 `$NFU_FLAKE` → `$FLAKE` (the `nh` convention). nfu validates the directory
 actually contains a `flake.nix` before it runs, so a typo fails fast and clearly.
 
+### Terminals that are not UTF-8
+
+nfu does not assume your terminal decodes UTF-8. A terminal that does not
+reads the bytes of ordinary characters as controls, so there only ASCII is
+safe. At start nfu goes by the locale (`LC_ALL`, then `LC_CTYPE`, then
+`LANG`). Where that does not name UTF-8, or names nothing, nfu draws ASCII
+only: its own bullets, arrows, borders and spinners give way to ASCII ones, a
+name such as `café` is shown as `caf<U+00E9>`, and one line on stderr (and at
+the top of each TUI) says so and why.
+
+The locale is all nfu can see, and many terminals under `LANG=C` do decode
+UTF-8. Overrule it either way with `--charset utf8` or `--charset ascii`, or
+for good with `charset = "utf8"` in the config (`programs.nfu.settings.charset`
+via home-manager). `--json` is data and is not changed.
+
 ### Themes
 
 `theme = "<name>"` picks the color palette for every TUI and listing:

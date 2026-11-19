@@ -60,6 +60,9 @@ flags:
   -y, --yes          skip the project-run confirmation prompt
   -m, --merge        project run: fold the named projects into one pipeline
       --json         machine-readable output
+      --charset MODE what the terminal decodes: auto (the default: go by the
+                     locale), utf8, ascii. Where it is not known to decode
+                     UTF-8, nfu draws ASCII only
   -h, --help         show this help
 
 project add / edit:
@@ -92,6 +95,7 @@ type globalFlags struct {
 	asJSON   bool
 	yes      bool
 	merge    bool
+	charset  string
 
 	// `project add` / `project edit` definition flags.
 	inputs        string
@@ -123,6 +127,7 @@ func addFlags(fs *flag.FlagSet, g *globalFlags) {
 	fs.BoolVar(&g.yes, "y", false, "skip confirmation (shorthand)")
 	fs.BoolVar(&g.merge, "merge", false, "project run: fold the named projects into one pipeline")
 	fs.BoolVar(&g.merge, "m", false, "merge (shorthand)")
+	fs.StringVar(&g.charset, "charset", "", "what the terminal decodes: auto, utf8 or ascii")
 
 	// `project add` / `project edit` definition flags.
 	fs.StringVar(&g.inputs, "inputs", "", "project add/edit: comma-separated flake inputs")
@@ -138,6 +143,12 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	// Before a word is printed: what does the terminal decode? Until the
+	// flags are read this is the check's own answer (useTerminal).
+	if t, err := ui.ChooseTerminal("", os.Stdout); err == nil {
+		ui.SetTerminal(t)
+	}
+
 	fs := flag.NewFlagSet("nfu", flag.ContinueOnError)
 	// Own all usage/error output ourselves: stdlib flag would otherwise print
 	// usage to fs's output AND we'd print it again, duplicating help.
@@ -150,15 +161,18 @@ func main() {
 	positionals, err := parseInterspersed(fs, os.Args[1:])
 	if err != nil {
 		if errors.Is(err, flag.ErrHelp) {
-			fmt.Print(usage) // -h/--help: usage to stdout, exactly once
+			ui.Fprint(os.Stdout, usage) // -h/--help: usage to stdout, exactly once
 			return
 		}
 		// A flag error quotes the argument it could not parse.
 		printError(os.Stderr, err)
-		fmt.Fprintf(os.Stderr, "\n%s", usage)
+		ui.Fprintf(os.Stderr, "\n%s", usage)
 		os.Exit(2)
 	}
 
+	if err := useTerminal(os.Stderr, g); err != nil {
+		fail(g, err)
+	}
 	warnArgs(os.Stderr, g, positionals)
 	if err := dispatch(ctx, g, positionals); err != nil {
 		fail(g, err)
@@ -179,6 +193,33 @@ func fail(g globalFlags, err error) {
 	os.Exit(1)
 }
 
+// useTerminal settles what nfu takes the terminal to decode, for the rest of
+// the run: --charset if it was given, else the config's `charset`, else what
+// termsafe.CheckTerminal makes of the environment. Everything that draws goes
+// by it (internal/ui/terminal.go). When the terminal is not known to decode
+// UTF-8 it says so, once, on w: nfu then draws ASCII only, and the user has
+// to know why and how to overrule it. Not under --json, which draws nothing.
+//
+// A config that will not load is not reported here: the command that needs
+// it reports it.
+func useTerminal(w io.Writer, g globalFlags) error {
+	charset := g.charset
+	if charset == "" {
+		if cfg, err := loadConfig(g.config); err == nil {
+			charset = cfg.Charset
+		}
+	}
+	t, err := ui.ChooseTerminal(charset, os.Stdout)
+	if err != nil {
+		return fmt.Errorf("--%w", err)
+	}
+	ui.SetTerminal(t)
+	if warning := ui.TerminalWarning(); !warning.IsEmpty() && !g.asJSON {
+		ui.Fprintln(w, "nfu: "+warning.String())
+	}
+	return nil
+}
+
 // printError prints an error as `nfu: <err>`. This is the last thing most
 // failed runs print, and the error can quote anything: nix's whole stderr,
 // git's, a name from flake.lock, a path, a TOML file's parse error, an
@@ -186,9 +227,9 @@ func fail(g globalFlags, err error) {
 // short, a second line says so.
 func printError(w io.Writer, err error) {
 	text, rep := ui.Err(err)
-	fmt.Fprintln(w, "nfu: "+text.String())
+	ui.Fprintln(w, "nfu: "+text.String())
 	if note := ui.CutNote(rep.Unterminated); !note.IsEmpty() {
-		fmt.Fprintln(w, "nfu: "+note.String())
+		ui.Fprintln(w, "nfu: "+note.String())
 	}
 }
 
@@ -200,7 +241,7 @@ func printError(w io.Writer, err error) {
 func warnArgs(w io.Writer, g globalFlags, positionals []string) {
 	warn := func(what, raw string) {
 		if msg := ui.ArgWarning(what, raw); !msg.IsEmpty() {
-			fmt.Fprintln(w, "nfu: "+msg.String())
+			ui.Fprintln(w, "nfu: "+msg.String())
 		}
 	}
 	for _, p := range positionals {
@@ -229,7 +270,7 @@ func dispatch(ctx context.Context, g globalFlags, positionals []string) error {
 	}
 	switch positionals[0] {
 	case "help":
-		fmt.Print(usage)
+		ui.Fprint(os.Stdout, usage)
 		return nil
 	case "list", "ls":
 		return runList(ctx, g)

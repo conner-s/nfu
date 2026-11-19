@@ -19,6 +19,14 @@ commit = false
 # name fails at load with the valid set.
 # theme = "gruvbox-dark"
 
+# What the terminal decodes: auto | utf8 | ascii. auto, the default, goes by
+# the locale (LC_ALL, LC_CTYPE, LANG). Where the terminal is not known to
+# decode UTF-8, nfu draws ASCII only, shows any other character by its code
+# point, and says so on every run. If yours does decode UTF-8 and the locale
+# does not say so (a cron job, a shell under LANG=C), set utf8 here.
+# Override per-run with --charset.
+# charset = "utf8"
+
 # Where the per-file project definitions live (see `nfu project`). Defaults to
 # a "projects" directory beside this config; point it at a git-tracked path to
 # version-control your projects.

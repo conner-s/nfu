@@ -15,7 +15,7 @@ import (
 // View renders the picker inline: it never takes the alt screen, so the final
 // frame stays in the shell scrollback like it did under bubbletea v1.
 func (m model) View() tea.View {
-	return tea.NewView(m.render())
+	return tea.NewView(ui.Own(m.render()))
 }
 
 func (m model) render() string {
@@ -39,7 +39,20 @@ func (m model) render() string {
 
 func (m model) header() string {
 	root := m.client.Root()
-	return ui.TitleLine(m.styles, ui.Line(filepath.Base(root)), ui.Line(root))
+	return banner(m.styles, 0) + ui.TitleLine(m.styles, ui.Line(filepath.Base(root)), ui.Line(root))
+}
+
+// banner is the warning that the terminal is not known to decode UTF-8, for
+// the top of a view; nothing on a UTF-8 terminal.
+func banner(s ui.Styles, width int) string {
+	var b strings.Builder
+	for _, l := range ui.TerminalBanner(width) {
+		b.WriteString(s.Warn.Render(l) + "\n")
+	}
+	if b.Len() > 0 {
+		b.WriteString("\n")
+	}
+	return b.String()
 }
 
 func (m model) pickView() string {

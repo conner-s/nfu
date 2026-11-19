@@ -396,6 +396,10 @@ Or build directly: `nix build git+ssh://git@github.com/conner-s/nfu.git`.
 The first build after a dependency change reports the correct `vendorHash` to
 paste into `flake.nix`.
 
+Building nfu downloads one Go module from the lab's Forgejo, so the machine
+that builds it has to reach `forgejo.kube.internal.conn3r.xyz` the first time
+(see [The module from the Forgejo](#the-module-from-the-forgejo)).
+
 `nix` itself is always taken from the host (never wrapped in), so your features,
 substituters, and `nix.conf` apply; `git` is suffixed onto `PATH` only as a
 fallback.
@@ -419,3 +423,56 @@ consumers of it plus `internal/lock` (the commit orchestration) and
 - Module path: `github.com/conner-s/nfu`. The binary is
   self-contained (everything under `internal/`), so `buildGoModule` never
   fetches the path (it builds from `./.`).
+
+### Text nfu did not write
+
+A `flake.lock` field, a project file, a path, what nix or deploy printed, what
+you typed: none of it is drawn or printed raw. It is cleaned by the
+[termsafe](https://forgejo.kube.internal.conn3r.xyz/connerlab/termsafe) module
+first, and everything that draws takes a `termsafe.Text`, which only cleaning
+can make. [docs/untrusted-text.md](docs/untrusted-text.md) follows every such
+value from where it comes in to where it is shown, says what nfu tells you
+when cleaning changed something, and lists what gets the raw value on purpose.
+A new path to the screen goes into that table and into the entry tables of
+`internal/tui/hostile_test.go` and `hostile_test.go`.
+
+`nh os switch` and `deploy` under `nfu project run`, `sudo -v`, and `$EDITOR`
+are given the terminal. nfu does not stand between them and the screen and
+cannot clean what they write.
+
+### The module from the Forgejo
+
+termsafe lives on the lab's Forgejo, which the public Go proxy cannot see and
+whose certificate chains to a private root, `connerlabPKI Root CA`. Two things
+follow.
+
+Outside Nix, set `GOPRIVATE=forgejo.kube.internal.conn3r.xyz` before any `go`
+command that may touch the network (`go get`, `go mod tidy`, a first `go
+build`). Without it go asks proxy.golang.org and sum.golang.org about the
+module's path before it tries the Forgejo. `nix develop` sets it. The machine
+has to trust the root: go asks the Forgejo over HTTPS where the repository is
+and git then clones it over HTTPS.
+
+Inside Nix, `buildGoModule` downloads the modules in a derivation of its own
+(`.#nfu.goModules`, the one `vendorHash` is the hash of), with nixpkgs' bundle
+of public certificate authorities. `flake.nix` adds the root, from
+`nix/connerlab-root-ca.crt`, to that derivation's bundle and sets `GOPRIVATE`
+there (`overrideModAttrs`). The version of termsafe is pinned in `go.mod` and
+nowhere else. The builder has to reach the Forgejo the first time; after that
+the vendor tree is in the store under its hash.
+
+A build that works on your own machine does not show that this holds. Nix
+passes the daemon's `NIX_SSL_CERT_FILE` into that derivation, and on a machine
+whose own bundle already has the root (nix-darwin with
+`security.pki.certificateFiles`) the fetch succeeds with or without the
+override. And once the vendor tree is in the store, Nix does not fetch at all.
+To see the fetch run, force it:
+
+```
+nix build .#nfu.goModules --rebuild     # fetches again and compares
+```
+
+Its log names the bundle it used, in a line starting `go modules:`. If the
+fetch fails, the error says which of the two requests it was: `Get
+"https://forgejo…?go-get=1": … x509` is go not trusting the server, and `git
+ls-remote … SSL certificate` is git not trusting it.

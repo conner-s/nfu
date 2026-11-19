@@ -11,7 +11,7 @@
 #       commit = false;   # set true to auto-commit flake.lock after updates
 #     };
 #     # Declarative deploy hosts + projects for `nfu project` (optional).
-#     hosts.Fabricator = { hostname = "192.168.4.10"; deployArgs = [ "--magic-rollback" "false" ]; };
+#     hosts.Fabricator = { hostname = "192.0.2.10"; deployArgs = [ "--magic-rollback" "false" ]; };
 #     projects.totality = { inputs = [ "totality" ]; hosts = [ "Fabricator" ]; };
 #     # A bundle: one update, one rebuild, each host once.
 #     projects.workstation = { includes = [ "totality" "npk" "nfu" ]; };
@@ -145,7 +145,7 @@ in
       type = lib.types.attrsOf hostType;
       default = { };
       example = lib.literalExpression ''
-        { Fabricator = { hostname = "192.168.4.10"; deployArgs = [ "--magic-rollback" "false" ]; }; }
+        { Fabricator = { hostname = "192.0.2.10"; deployArgs = [ "--magic-rollback" "false" ]; }; }
       '';
       description = "Declarative deploy hosts (deploy-rs nodes) for `nfu project`, written to config.toml.";
     };

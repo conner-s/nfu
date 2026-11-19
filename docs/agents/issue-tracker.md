@@ -1,13 +1,22 @@
 # Issue tracker: Forgejo
 
-Issues, specs and pull requests for this repo live on Forgejo at
-**`forgejo.kube.internal.conn3r.xyz`**, repo **`connerlab/nfu`**. Use the `fj` CLI (the native
-Forgejo client) for everything it covers, and the Forgejo API for what it
-doesn't: issue dependencies.
+Issues, specs and pull requests for this repo live on its home forge, a
+Forgejo instance. This file does not spell the forge's host or the
+repository's owner: the tree is published, and the host is a private one. Both
+come from the checkout, whose `origin` remote points at the home forge:
 
-`fj` infers the repo from the git remote when run inside a clone and is already
-signed in (`fj whoami`). Pass `-R <remote>` if a clone has several remotes and
-the wrong one wins.
+```sh
+git remote get-url origin
+```
+
+Use the `fj` CLI (the native Forgejo client) for everything it covers, and the
+Forgejo API for what it doesn't: issue dependencies.
+
+`fj` infers the host and the repo from the git remote when run inside a clone
+and is already signed in (`fj whoami`). Pass `-R <remote>` if a clone has
+several remotes and the wrong one wins. A clone of a public mirror has an
+`origin` that is not the home forge: nothing below works from there, and the
+issues are not on the mirror.
 
 ## Issues
 
@@ -21,8 +30,8 @@ the wrong one wins.
   `all`.
 - **Comment**: `fj issue comment <n> "..."`, or `--body-file <path>`.
 - **Labels**: `fj issue edit <n> labels --add "<label>"` / `--rm "<label>"`.
-- **Manage labels**: `fj repo labels connerlab/nfu view`, and
-  `fj repo labels connerlab/nfu create <name> <hex-colour> -d "..."`.
+- **Manage labels**: `fj repo labels view`, and
+  `fj repo labels create <name> <hex-colour> -d "..."`.
 - **Assign**: `fj issue assign <n> <user>`.
 - **Close**: `fj issue close <n> --with-msg "..."`.
 
@@ -53,26 +62,44 @@ pipe. `--style` is a **global** flag, so it goes before the subcommand
 Reach for the API when you need structure (counting, joining, anything where
 parsing `fj` text would be fragile) and for the operations `fj` lacks.
 
-Base URL: `https://forgejo.kube.internal.conn3r.xyz/api/v1`. `fj` keeps an OAuth token in
-`~/.local/share/forgejo-cli/keys.json`. Run any `fj` command first so it
-refreshes an expired token, then:
+The base URL is `https://<host>/api/v1` and every path below starts with
+`/repos/<owner>/<repo>`; both come from the `origin` remote. `fj` keeps an
+OAuth token per host in `keys.json`, under `~/.local/share/forgejo-cli/` on
+Linux and `~/Library/Application Support/forgejo-cli.forgejo-cli/` on macOS.
+Run any `fj` command first so it refreshes an expired token, then (in the
+clone; sh, bash or zsh):
 
 ```sh
-TOKEN=$(jq -r '.hosts["forgejo.kube.internal.conn3r.xyz"].token' ~/.local/share/forgejo-cli/keys.json)
-curl -sS -H "Authorization: Bearer $TOKEN" https://forgejo.kube.internal.conn3r.xyz/api/v1/repos/connerlab/nfu/issues/<n>
+# host and owner/repo from the remote: ssh://git@HOST/OWNER/REPO.git,
+# git@HOST:OWNER/REPO.git or https://HOST/OWNER/REPO.git
+url=$(git remote get-url origin); url=${url%.git}
+case $url in
+  *://*) rest=${url#*://}; rest=${rest#*@}; host=${rest%%/*}; repo=${rest#*/} ;;
+  *)     rest=${url#*@}; host=${rest%%:*}; repo=${rest#*:} ;;
+esac
+host=${host%%:*}                      # without a port: the API is on 443
+api="https://$host/api/v1/repos/$repo"
+
+keys="${XDG_DATA_HOME:-$HOME/.local/share}/forgejo-cli/keys.json"
+[ -f "$keys" ] || keys="$HOME/Library/Application Support/forgejo-cli.forgejo-cli/keys.json"
+TOKEN=$(jq -r --arg h "$host" '.hosts[$h].token' "$keys")
+
+curl -sS -H "Authorization: Bearer $TOKEN" "$api/issues/<n>"
 ```
 
 Never print the token or write it into a file, issue or commit. If the shell
 blocks `curl`, fall back to the text conventions below and tell the user; don't
 route around the block.
 
+With `$api` from above (`<owner>` and `<repo>` are the two halves of `$repo`):
+
 ```
-GET    /repos/connerlab/nfu/issues?state=open&labels=needs-triage&type=issues
-GET    /repos/connerlab/nfu/issues/<n>/comments
-GET    /repos/connerlab/nfu/issues/<n>/dependencies     issues that block <n>
-POST   /repos/connerlab/nfu/issues/<n>/dependencies     {"owner":"connerlab","repo":"nfu","index":<blocker>}
-DELETE /repos/connerlab/nfu/issues/<n>/dependencies     same body
-GET    /repos/connerlab/nfu/issues/<n>/blocks           issues that <n> blocks
+GET    $api/issues?state=open&labels=needs-triage&type=issues
+GET    $api/issues/<n>/comments
+GET    $api/issues/<n>/dependencies     issues that block <n>
+POST   $api/issues/<n>/dependencies     {"owner":"<owner>","repo":"<repo>","index":<blocker>}
+DELETE $api/issues/<n>/dependencies     same body
+GET    $api/issues/<n>/blocks           issues that <n> blocks
 ```
 
 ## Blocking edges between tickets

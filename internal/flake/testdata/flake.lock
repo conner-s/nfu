@@ -33,12 +33,12 @@
         "ref": "main",
         "rev": "154e144ab144d1b00003f0ed7d8e3f7a5105e285",
         "type": "git",
-        "url": "ssh://git@forgejo.example/connerlab/totality.git"
+        "url": "ssh://git@forgejo.example/example/totality.git"
       },
       "original": {
         "ref": "main",
         "type": "git",
-        "url": "ssh://git@forgejo.example/connerlab/totality.git"
+        "url": "ssh://git@forgejo.example/example/totality.git"
       }
     }
   },

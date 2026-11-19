@@ -4,7 +4,7 @@
 
 ### Issue tracker
 
-Forgejo issues and pull requests on `forgejo.kube.internal.conn3r.xyz` (`connerlab/nfu`), via the `fj` CLI plus the Forgejo API for issue dependencies. See `docs/agents/issue-tracker.md`.
+Forgejo issues and pull requests on the repository's home forge, which is where this checkout's `origin` remote points (`git remote get-url origin`), via the `fj` CLI plus the Forgejo API for issue dependencies. See `docs/agents/issue-tracker.md`.
 
 ### Triage labels
 

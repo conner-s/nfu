@@ -40,7 +40,7 @@ func TestEditCarriesFieldsTheFormDoesNotShow(t *testing.T) {
 		Description: "push totality everywhere",
 		FlakeRoot:   "~/Projects/nixos-config",
 		HostDefs: map[string]config.Host{
-			"Fabricator": {Hostname: "192.168.4.10", DeployArgs: []string{"--magic-rollback", "false"}},
+			"Fabricator": {Hostname: "192.0.2.10", DeployArgs: []string{"--magic-rollback", "false"}},
 		},
 	}
 	m := editForm(t, base)
@@ -78,7 +78,7 @@ func TestEditCarriesFieldsTheFormDoesNotShow(t *testing.T) {
 	if res.Project.Description != base.Description || res.Project.FlakeRoot != base.FlakeRoot {
 		t.Errorf("dropped description/flakeRoot: %+v", res.Project)
 	}
-	if got := res.Project.HostDefs["Fabricator"]; got.Hostname != "192.168.4.10" {
+	if got := res.Project.HostDefs["Fabricator"]; got.Hostname != "192.0.2.10" {
 		t.Errorf("dropped inline host def: %+v", res.Project.HostDefs)
 	}
 	if !res.Project.SwitchLocal() {

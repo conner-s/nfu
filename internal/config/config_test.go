@@ -43,7 +43,7 @@ func TestLoadHostsAndProjects(t *testing.T) {
 	toml := `flakeRoot = "/a/b"
 
 [hosts.Fabricator]
-hostname   = "192.168.4.10"
+hostname   = "192.0.2.10"
 deployArgs = ["--magic-rollback", "false"]
 
 [projects.totality]
@@ -59,7 +59,7 @@ localSwitch = false
 		t.Fatalf("Load: %v", err)
 	}
 	h, ok := cfg.Hosts["Fabricator"]
-	if !ok || h.Hostname != "192.168.4.10" || len(h.DeployArgs) != 2 || h.DeployArgs[0] != "--magic-rollback" {
+	if !ok || h.Hostname != "192.0.2.10" || len(h.DeployArgs) != 2 || h.DeployArgs[0] != "--magic-rollback" {
 		t.Errorf("Hosts[Fabricator] = %+v", h)
 	}
 	p, ok := cfg.Projects["totality"]

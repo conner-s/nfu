@@ -65,7 +65,7 @@ func TestApplyFieldFlagsPrunesInlineDefs(t *testing.T) {
 	base := storedProject()
 	base.HostDefs = map[string]config.Host{
 		"Fabricator": {DeployArgs: []string{"--magic-rollback", "false"}},
-		"Servitor":   {Hostname: "192.168.4.11"},
+		"Servitor":   {Hostname: "192.0.2.11"},
 	}
 	p, _, err := applyFieldFlags(globalFlags{hosts: "Servitor"}, base)
 	if err != nil {
@@ -74,7 +74,7 @@ func TestApplyFieldFlagsPrunesInlineDefs(t *testing.T) {
 	if _, ok := p.HostDefs["Fabricator"]; ok {
 		t.Errorf("inline def outlived its host: %+v", p.HostDefs)
 	}
-	if p.HostDefs["Servitor"].Hostname != "192.168.4.11" {
+	if p.HostDefs["Servitor"].Hostname != "192.0.2.11" {
 		t.Errorf("still-deployed host lost its def: %+v", p.HostDefs)
 	}
 }

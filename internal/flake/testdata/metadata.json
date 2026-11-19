@@ -52,7 +52,7 @@
         },
         "locked": {
           "type": "git",
-          "url": "ssh://git@example.com/connerlab/totality.git",
+          "url": "ssh://git@example.com/example/totality.git",
           "ref": "main",
           "rev": "6bdb38aa582f3ab09bb61a9fddd4cec7e069eee2",
           "narHash": "sha256-AkwK4si8cpuXFCrE082x3WhqkIZaUpu2uO/AFiCW0sU=",
@@ -61,7 +61,7 @@
         },
         "original": {
           "type": "git",
-          "url": "ssh://git@example.com/connerlab/totality.git",
+          "url": "ssh://git@example.com/example/totality.git",
           "ref": "main"
         }
       },
@@ -72,7 +72,7 @@
         },
         "locked": {
           "type": "git",
-          "url": "ssh://git@example.com/connerlab/home-manager.git",
+          "url": "ssh://git@example.com/example/home-manager.git",
           "ref": "main",
           "rev": "abcabcabcabcabcabcabcabcabcabcabcabcabca",
           "narHash": "sha256-CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC=",
@@ -80,7 +80,7 @@
         },
         "original": {
           "type": "git",
-          "url": "ssh://git@example.com/connerlab/home-manager.git",
+          "url": "ssh://git@example.com/example/home-manager.git",
           "ref": "main"
         }
       }

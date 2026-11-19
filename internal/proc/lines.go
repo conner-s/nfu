@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"regexp"
-	"strings"
+
+	"forgejo.kube.internal.conn3r.xyz/connerlab/termsafe"
 )
 
 // RunLines runs name with args in dir, streaming its combined stdout+stderr to
@@ -18,15 +18,20 @@ import (
 // /dev/null; anything that must prompt (a sudo password) has to be settled
 // before the run starts (see the manager's `sudo -v` pre-auth).
 //
-// Lines are sanitized for that pane: carriage-return progress redraws (nh/nom
-// spinners) split like newlines, ANSI escape sequences and control characters
-// are stripped, and runs of blank lines collapse. The child is also asked to
-// keep it plain via TERM=dumb/NO_COLOR — the stripping is the backstop for
-// tools that colorize pipes anyway.
+// Lines are cleaned for that pane, which is why onLine takes a termsafe.Text
+// and cannot be handed the raw line: carriage-return progress redraws (nh/nom
+// spinners) split like newlines, every control sequence goes with its payload,
+// control characters, bidirectional controls and invisible characters are
+// removed, a tab becomes a space, and runs of blank lines collapse. This is a
+// log that is watched going by, so the policy is termsafe.Drop: nothing marks
+// what was removed. The report handed to onLine counts it, and its
+// Unterminated field says when a control string without a terminator took the
+// rest of a line with it. The child is also asked to keep it plain via
+// TERM=dumb/NO_COLOR; the cleaning is what holds when it does not.
 //
 // onLine is called from the calling goroutine, in order, with the terminator
 // stripped. A non-zero exit is returned as a CmdError, like Stream.
-func RunLines(ctx context.Context, dir string, onLine func(string), name string, args ...string) error {
+func RunLines(ctx context.Context, dir string, onLine func(termsafe.Text, termsafe.Report), name string, args ...string) error {
 	bin, err := exec.LookPath(name)
 	if err != nil {
 		return fmt.Errorf("required program %q not found in PATH", name)
@@ -52,13 +57,13 @@ func RunLines(ctx context.Context, dir string, onLine func(string), name string,
 	sc.Split(scanTerminalLines)
 	lastBlank := true // also swallows leading blanks
 	for sc.Scan() {
-		l := stripControl(sc.Text())
-		blank := strings.TrimSpace(l) == ""
-		if blank && lastBlank {
+		l, rep := termsafe.Drop.LineReport(sc.Text())
+		blank := l.TrimSpace().IsEmpty()
+		if blank && lastBlank && rep.Unterminated == 0 {
 			continue
 		}
 		lastBlank = blank
-		onLine(l)
+		onLine(l, rep)
 	}
 	pr.Close()
 	if err := cmd.Wait(); err != nil {
@@ -87,26 +92,4 @@ func scanTerminalLines(data []byte, atEOF bool) (int, []byte, error) {
 		return len(data), data, nil
 	}
 	return 0, nil, nil
-}
-
-// ansiRE matches ANSI escape sequences: CSI (colors, cursor movement), OSC
-// (titles, hyperlinks) with BEL or ST terminators, and lone two-byte escapes.
-var ansiRE = regexp.MustCompile(`\x1b(?:\[[0-9;:?<=>]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\)?|[@-Z\\-_])`)
-
-// stripControl removes ANSI escape sequences and non-printing control bytes so
-// a captured line can be rendered inside a TUI frame without the terminal
-// executing them. Tabs survive as-is.
-func stripControl(s string) string {
-	if strings.ContainsRune(s, '\x1b') {
-		s = ansiRE.ReplaceAllString(s, "")
-	}
-	return strings.Map(func(r rune) rune {
-		if r == '\t' {
-			return r
-		}
-		if r < 0x20 || r == 0x7f {
-			return -1
-		}
-		return r
-	}, s)
 }

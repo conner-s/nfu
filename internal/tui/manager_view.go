@@ -2,6 +2,12 @@
 // prototype: list (table + filter), detail (steps timeline beside the on-disk
 // TOML), run (step sidebar + live log + progress bar), with a shared header and
 // key-hint footer.
+//
+// Nearly everything these views draw comes from project files, the run
+// history and the configuration, and none of it is drawn raw. A view reads an
+// entryRow (rowFor), a runStep (stepsForPlan), a runLine (runEngine) or the
+// toast (say), whose text is termsafe.Text; the project.Entry values on the
+// model are for acting on. docs/untrusted-text.md has the whole table.
 package tui
 
 import (
@@ -12,6 +18,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"forgejo.kube.internal.conn3r.xyz/connerlab/termsafe"
 
 	"github.com/conner-s/nfu/internal/project"
 	"github.com/conner-s/nfu/internal/ui"
@@ -75,10 +82,10 @@ func (m managerModel) viewHeader(w int) string {
 	g := m.g
 	left := g.Badge.Render("nfu") + " " + g.Gray.Render("project")
 	mid := g.Faint.Render(" │ ") + g.Tan.Render(fmt.Sprintf("projects(%d)", len(m.filteredIdx()))) +
-		g.Faint.Render(" │ ") + g.Gray.Render(m.deps.ProjectsDir)
+		g.Faint.Render(" │ ") + g.Gray.Render(ui.Line(m.deps.ProjectsDir).String())
 	right := g.Faint.Render("no current project")
 	if m.current != "" {
-		right = g.Gray.Render("current: ") + g.Yellow.Render(m.current)
+		right = g.Gray.Render("current: ") + g.Yellow.Render(ui.Name(m.current).String())
 	}
 	line := left + mid
 	pad := w - lipgloss.Width(line) - lipgloss.Width(right)
@@ -121,14 +128,21 @@ func (m managerModel) viewFooter(w int) string {
 		parts = append(parts, g.Yellow.Render(hint[0])+" "+g.Gray.Render(hint[1]))
 	}
 	line := " " + strings.Join(parts, g.Faint.Render(" · "))
-	if m.toast != "" {
-		t := m.toneStyle(m.toastTone)(m.toast)
+	if !m.toast.IsEmpty() {
+		t := m.toneStyle(m.toastTone)(m.toast.String())
 		pad := w - lipgloss.Width(line) - lipgloss.Width(t) - 1
 		if pad > 0 {
-			line += strings.Repeat(" ", pad) + t
-		} else {
-			line += "  " + t
+			return line + strings.Repeat(" ", pad) + t
 		}
+		// No room beside the hints. A toast that ran off the right edge
+		// would be cut there, and a warning must be read to the end: it
+		// gets lines of its own above the hints, wrapped to the width.
+		var above strings.Builder
+		wrapped := lipgloss.NewStyle().Width(maxi(w-2, 20)).Render(m.toast.String())
+		for _, l := range strings.Split(wrapped, "\n") {
+			above.WriteString(" " + m.toneStyle(m.toastTone)(strings.TrimRight(l, " ")) + "\n")
+		}
+		return above.String() + line
 	}
 	return line
 }
@@ -141,35 +155,35 @@ func (m managerModel) viewProjectList(w, h int) string {
 	b.WriteString("\n")
 	b.WriteString(" " + m.viewHeader(w-2))
 
+	filter := ui.Line(m.filter)
 	if m.filterOn || m.filter != "" {
 		cursor := ""
 		if m.filterOn {
 			cursor = g.Fg.Render("▏")
 		}
-		b.WriteString(" " + g.Yellow.Render("/") + g.Fg.Render(m.filter) + cursor +
+		b.WriteString(" " + g.Yellow.Render("/") + g.Fg.Render(filter.String()) + cursor +
 			g.Faint.Render("  esc clear · enter keep") + "\n")
 	}
 	b.WriteString("\n")
 
-	rows := m.filteredIdx()
+	idx := m.filteredIdx()
 	if len(m.entries) == 0 {
 		b.WriteString(" " + g.Faint.Render("no projects yet — `n` to create one") + "\n")
 		return b.String()
 	}
-	if len(rows) == 0 {
-		b.WriteString(" " + g.Faint.Render(fmt.Sprintf("no projects match '%s'", m.filter)) + "\n")
+	if len(idx) == 0 {
+		b.WriteString(" " + g.Faint.Render(fmt.Sprintf("no projects match '%s'", filter)) + "\n")
 		return b.String()
 	}
 
 	// Column widths from content; DESCRIPTION flexes to the remaining width.
+	rows := make([]entryRow, len(idx))
 	wName, wTarget, wLast := 4, 6, 8
-	for _, i := range rows {
-		e := m.entries[i]
-		_, hosts, localSwitch := m.shape(&e)
-		tl, _ := targetLabel(hosts, localSwitch)
-		wName = maxi(wName, utf8.RuneCountInString(e.Name))
-		wTarget = maxi(wTarget, utf8.RuneCountInString(tl))
-		wLast = maxi(wLast, utf8.RuneCountInString(m.lastRunLabel(e.Name)))
+	for i, n := range idx {
+		rows[i] = m.rowFor(&m.entries[n])
+		wName = maxi(wName, utf8.RuneCountInString(rows[i].name.String()))
+		wTarget = maxi(wTarget, utf8.RuneCountInString(rows[i].target.String()))
+		wLast = maxi(wLast, utf8.RuneCountInString(rows[i].lastRun))
 	}
 	const wSteps, wStatus = 5, 8
 	wDesc := w - (2 + 1 + wName + 2 + wSteps + 2 + wTarget + 2 + wLast + 2 + wStatus + 4)
@@ -188,12 +202,12 @@ func (m managerModel) viewProjectList(w, h int) string {
 		visible = 3
 	}
 	pos := 0
-	for i, idx := range rows {
-		if idx == m.sel {
+	for i, n := range idx {
+		if n == m.sel {
 			pos = i
 		}
 	}
-	top := clamp(m.top, 0, maxi(0, len(rows)-visible))
+	top := clamp(m.top, 0, maxi(0, len(idx)-visible))
 	if pos < top {
 		top = pos
 	}
@@ -201,37 +215,82 @@ func (m managerModel) viewProjectList(w, h int) string {
 		top = pos - visible + 1
 	}
 
-	for _, idx := range rows[top:mini(len(rows), top+visible)] {
-		e := m.entries[idx]
-		on := idx == m.sel
-		_, hosts, localSwitch := m.shape(&e)
-		tl, tt := targetLabel(hosts, localSwitch)
-		status, st := m.statusLabel(e.Name)
+	for i := top; i < mini(len(idx), top+visible); i++ {
+		r := rows[i]
+		on := idx[i] == m.sel
 		marker := " "
-		if e.Name == m.current {
+		if r.current {
 			marker = g.Yellow.Render("*")
 		}
 		cursor := "  "
 		if on {
 			cursor = g.Orange.Render("▸ ")
 		}
-		name := padRight(e.Name, wName)
-		desc := padRight(trunc(e.Project.Description, wDesc), wDesc)
 		line := fmt.Sprintf("%s%s%s  %s  %s  %s  %s  %s",
 			marker, cursor,
-			g.Fg.Bold(true).Render(name),
-			m.dimIf(!on, desc),
-			g.Tan.Render(padRight(fmt.Sprintf("%d", stepCount(hosts, localSwitch)), wSteps)),
-			m.toneStyle(tt)(padRight(tl, wTarget)),
-			g.Tan.Render(padRight(m.lastRunLabel(e.Name), wLast)),
-			m.toneStyle(st)(status),
+			g.Fg.Bold(true).Render(padRight(r.name.String(), wName)),
+			m.dimIf(!on, padRight(r.desc.Truncate(wDesc).String(), wDesc)),
+			g.Tan.Render(padRight(fmt.Sprintf("%d", r.steps), wSteps)),
+			m.toneStyle(r.targetTone)(padRight(r.target.String(), wTarget)),
+			g.Tan.Render(padRight(r.lastRun, wLast)),
+			m.toneStyle(r.statusTone)(r.status),
 		)
 		b.WriteString(strings.TrimRight(line, " ") + "\n")
 	}
-	if len(rows) > visible {
-		b.WriteString(" " + g.Faint.Render(fmt.Sprintf("… %d of %d shown", visible, len(rows))) + "\n")
+	if len(idx) > visible {
+		b.WriteString(" " + g.Faint.Render(fmt.Sprintf("… %d of %d shown", visible, len(idx))) + "\n")
 	}
 	return b.String()
+}
+
+// entryRow is a project as the manager draws it. A project.Entry is read from
+// TOML files anyone may have written, so the views never draw its fields: they
+// draw a row, whose text was cleaned when rowFor built it. source, lastRun and
+// status are nfu's own words.
+type entryRow struct {
+	name       termsafe.Text
+	desc       termsafe.Text // empty when the project has none
+	source     string
+	current    bool
+	steps      int
+	target     termsafe.Text
+	targetTone tone
+	ran        bool // the run history has a run of it
+	lastRun    string
+	status     string
+	statusTone tone
+
+	// For the detail view.
+	lastDetail termsafe.Text // what the last run did, from the run history
+	flake      termsafe.Text
+	bundle     termsafe.Text // the projects it includes; empty for a plain project
+	inputs     termsafe.Text // what a run would move
+}
+
+// rowFor cleans one entry for display. This is the one place a project's
+// name, description, hosts, inputs and paths become text to draw.
+func (m managerModel) rowFor(e *project.Entry) entryRow {
+	inputs, hosts, localSwitch := m.shape(e)
+	r := entryRow{
+		name:    ui.Name(e.Name),
+		desc:    ui.Line(e.Project.Description),
+		source:  e.Source,
+		current: e.Name == m.current,
+		steps:   stepCount(hosts, localSwitch),
+		lastRun: m.lastRunLabel(e.Name),
+		flake:   ui.Line(m.flakeRootFor(e)),
+		inputs:  ui.Names(inputs, ", "),
+	}
+	r.target, r.targetTone = targetLabel(hosts, localSwitch)
+	r.status, r.statusTone = m.statusLabel(e.Name)
+	if rec, ok := m.runs[e.Name]; ok && !rec.At.IsZero() {
+		r.ran = true
+		r.lastDetail = ui.Line(rec.Detail)
+	}
+	if len(e.Project.Includes) > 0 {
+		r.bundle = ui.Names(e.Project.Includes, " + ")
+	}
+	return r
 }
 
 func (m managerModel) dimIf(dim bool, s string) string {
@@ -267,6 +326,7 @@ func (m managerModel) viewProjectDetail(w, h int) string {
 	if e == nil {
 		return "\n " + m.g.Faint.Render("no project selected") + "\n"
 	}
+	r := m.rowFor(e)
 	g := m.g
 	leftW := w * 3 / 5
 	rightW := w - leftW - 3
@@ -284,40 +344,37 @@ func (m managerModel) viewProjectDetail(w, h int) string {
 	}
 
 	// Title: name, source badge, position among the (filtered) projects.
-	title := g.Orange.Bold(true).Render(e.Name) + "  " +
-		g.Yellow.Render("["+e.Source+"]") + "  " +
+	title := g.Orange.Bold(true).Render(r.name.String()) + "  " +
+		g.Yellow.Render("["+r.source+"]") + "  " +
 		g.Faint.Render(fmt.Sprintf("‹ %d of %d ›", pos, len(rows)))
 	b.WriteString(title + "\n")
-	desc := e.Project.Description
-	if desc == "" {
+	desc := r.desc.String()
+	if r.desc.IsEmpty() {
 		desc = "no description"
 	}
 	b.WriteString(g.Tan.Render(desc) + "\n\n")
 
 	// Meta box: where a run lands and what it moves.
-	inputs, hosts, localSwitch := m.shape(e)
-	tl, tt := targetLabel(hosts, localSwitch)
-	status, st := m.statusLabel(e.Name)
-	last := status
-	if rec, ok := m.runs[e.Name]; ok && !rec.At.IsZero() {
-		last += " · " + ui.RelAge(rec.At.Unix(), m.now)
-		if rec.Detail != "" {
-			last += "  (" + rec.Detail + ")"
+	last := r.status
+	if r.ran {
+		last += " · " + r.lastRun
+		if !r.lastDetail.IsEmpty() {
+			last += "  (" + r.lastDetail.String() + ")"
 		}
 	}
 	kv := func(k, v string) string { return g.Gray.Render(padRight(k, 9)) + " " + v }
 	// `inputs` shows what a run would MOVE (m.shape resolves a bundle's includes),
 	// and `bundle` names the members it came from, only when there are any.
 	metaRows := []string{
-		kv("flake", g.Tan.Render(m.flakeRootFor(e))),
-		kv("target", m.toneStyle(tt)(tl)),
+		kv("flake", g.Tan.Render(r.flake.String())),
+		kv("target", m.toneStyle(r.targetTone)(r.target.String())),
 	}
-	if len(e.Project.Includes) > 0 {
-		metaRows = append(metaRows, kv("bundle", g.Purple.Render(strings.Join(e.Project.Includes, " + "))))
+	if !r.bundle.IsEmpty() {
+		metaRows = append(metaRows, kv("bundle", g.Purple.Render(r.bundle.String())))
 	}
 	metaRows = append(metaRows,
-		kv("inputs", g.Blue.Render(strings.Join(inputs, ", "))),
-		kv("last run", m.toneStyle(st)(last)),
+		kv("inputs", g.Blue.Render(r.inputs.String())),
+		kv("last run", m.toneStyle(r.statusTone)(last)),
 	)
 	meta := strings.Join(metaRows, "\n")
 	b.WriteString(g.Box.Width(leftW).Render(meta) + "\n\n")
@@ -325,7 +382,7 @@ func (m managerModel) viewProjectDetail(w, h int) string {
 	// Steps timeline.
 	plan, err := project.BuildPlan(m.deps.Catalog, e.Name, m.deps.Commit)
 	if err != nil {
-		b.WriteString(g.Red.Render("✗ "+err.Error()) + "\n")
+		b.WriteString(g.Red.Render(ui.Linef("✗ %s", err).String()) + "\n")
 	} else {
 		steps := stepsForPlan(plan, m.flakeRootFor(e))
 		b.WriteString(g.Purple.Bold(true).Render(fmt.Sprintf("STEPS · %d", len(steps))) + "\n")
@@ -333,14 +390,18 @@ func (m managerModel) viewProjectDetail(w, h int) string {
 			c := m.stepStyle(s.verb)
 			b.WriteString(fmt.Sprintf(" %s  %s %s %s\n",
 				c.Render(fmt.Sprintf("%d", i+1)),
-				c.Render(s.icon+" "+s.title),
+				c.Render(s.icon+" "+s.title.String()),
 				g.Faint.Render("·"),
-				g.Tan.Render(trunc(s.detail, leftW-len(s.title)-10))))
+				g.Tan.Render(s.detail.Truncate(leftW-utf8.RuneCountInString(s.title.String())-10).String())))
 			rail := " " + g.Faint.Render("│")
 			if i == len(steps)-1 {
 				rail = "  "
 			}
-			b.WriteString(rail + "   " + g.Faint.Render(trunc(s.cmd, leftW-6)) + "\n")
+			b.WriteString(rail + "   " + g.Faint.Render(s.cmd.Truncate(leftW-6).String()) + "\n")
+		}
+		// A name in the plan that is not what it looks like, before `r` runs it.
+		for _, n := range plan.Notes() {
+			b.WriteString(g.Yellow.Render("! "+n.Truncate(leftW-3).String()) + "\n")
 		}
 	}
 	left := b.String()
@@ -376,29 +437,48 @@ func (m managerModel) stepStyle(verb string) lipgloss.Style {
 // viewTomlPane renders the project's definition as it would sit on disk, with a
 // light TOML tint. It re-marshals the in-memory project, so it is faithful for
 // declared projects too (which have no standalone file).
+//
+// The TOML is cleaned before it is drawn. A TOML encoder escapes the C0
+// controls in a string, but a C1 control, a bidirectional override or an
+// invisible character is legal TOML and comes out as it went in; here each is
+// shown as a marker, so the pane differs from the file exactly where the file
+// holds one.
 func (m managerModel) viewTomlPane(e *project.Entry, w int) string {
 	g := m.g
 	var b strings.Builder
-	title := strings.ToUpper(e.Name) + ".TOML"
+	title := ui.Linef("%s.TOML", strings.ToUpper(e.Name))
 	note := " · e edit"
 	if e.Source == project.SourceDeclared {
 		note = " · read-only"
 	}
-	b.WriteString(g.Gray.Render(title) + g.Faint.Render(note) + "\n\n")
+	b.WriteString(g.Gray.Render(title.String()) + g.Faint.Render(note) + "\n\n")
 	data, err := project.MarshalProject(e.Project)
 	if err != nil {
-		return b.String() + g.Red.Render(err.Error())
+		return b.String() + g.Red.Render(ui.Linef("%s", err).String())
 	}
-	for _, ln := range strings.Split(strings.TrimRight(string(data), "\n"), "\n") {
-		b.WriteString(m.tintToml(trunc(ln, w-1)) + "\n")
+	for _, ln := range tomlLines(data) {
+		b.WriteString(m.tintToml(ln.Truncate(w-1)) + "\n")
 	}
 	return b.String()
 }
 
+// tomlLines cleans a marshalled project and splits it into lines. Cleaning
+// comes first: a lone carriage return is a line break too.
+func tomlLines(data []byte) []termsafe.Text {
+	text := termsafe.Mark.Clean(strings.TrimRight(string(data), "\n"))
+	parts := strings.Split(text.String(), "\n")
+	lines := make([]termsafe.Text, len(parts))
+	for i, p := range parts {
+		lines[i] = termsafe.Mark.Line(p)
+	}
+	return lines
+}
+
 // tintToml colors one TOML line: comments faint, table headers orange, keys
 // aqua, values green.
-func (m managerModel) tintToml(ln string) string {
+func (m managerModel) tintToml(line termsafe.Text) string {
 	g := m.g
+	ln := line.String()
 	t := strings.TrimSpace(ln)
 	switch {
 	case t == "":
@@ -434,7 +514,7 @@ func (m managerModel) viewRun(w, h int) string {
 	if rs.dry {
 		mode = "dry-run"
 	}
-	side.WriteString(g.Gray.Render(fmt.Sprintf("STEPS · %s · %s", rs.name, mode)) + "\n\n")
+	side.WriteString(g.Gray.Render(fmt.Sprintf("STEPS · %s · %s", rs.title, mode)) + "\n\n")
 	doneN := 0
 	for i, s := range rs.steps {
 		icon, ic := "○", g.Faint
@@ -456,9 +536,9 @@ func (m managerModel) viewRun(w, h int) string {
 				t = "sudo…"
 			}
 		}
-		label := m.stepStyle(s.verb).Render(s.icon + " " + s.title)
+		label := m.stepStyle(s.verb).Render(s.icon + " " + s.title.String())
 		if i == rs.cur && rs.status == runRunning {
-			label = g.Fg.Bold(true).Render(s.icon + " " + s.title)
+			label = g.Fg.Bold(true).Render(s.icon + " " + s.title.String())
 		}
 		side.WriteString(fmt.Sprintf(" %s %s %s\n", ic.Render(icon), padRight(label, sideW-12), g.Yellow.Render(t)))
 	}
@@ -478,8 +558,8 @@ func (m managerModel) viewRun(w, h int) string {
 	// step's would-be command instead).
 	var right strings.Builder
 	cur := rs.steps[clamp(rs.cur, 0, len(rs.steps)-1)]
-	head := "● " + cur.icon + " " + cur.title + "  "
-	right.WriteString(statusStyle.Render(head) + g.Faint.Render(trunc(cur.cmd, logW-lipgloss.Width(head))) + "\n\n")
+	head := "● " + cur.icon + " " + cur.title.String() + "  "
+	right.WriteString(statusStyle.Render(head) + g.Faint.Render(cur.cmd.Truncate(logW-lipgloss.Width(head)).String()) + "\n\n")
 	tail := h - 8
 	if tail < 3 {
 		tail = 3
@@ -494,7 +574,7 @@ func (m managerModel) viewRun(w, h int) string {
 		visible = visible[len(visible)-tail:]
 	}
 	for _, l := range visible {
-		right.WriteString(m.toneStyle(l.tone)(trunc(l.text, logW)) + "\n")
+		right.WriteString(m.toneStyle(l.tone)(l.text.Truncate(logW).String()) + "\n")
 	}
 	if rs.status == runRunning {
 		right.WriteString(g.Fg.Render("▏"))
@@ -568,18 +648,6 @@ func (m managerModel) viewRunBar(rs *runState, w, doneN int) string {
 }
 
 // --- small helpers ---------------------------------------------------------
-
-// trunc clips s to w runes with an ellipsis (w ≤ 0 clips everything).
-func trunc(s string, w int) string {
-	if w <= 0 {
-		return ""
-	}
-	if utf8.RuneCountInString(s) <= w {
-		return s
-	}
-	r := []rune(s)
-	return string(r[:w-1]) + "…"
-}
 
 func mini(a, b int) int {
 	if a < b {

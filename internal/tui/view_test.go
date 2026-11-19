@@ -1,10 +1,12 @@
 package tui
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
 	"charm.land/bubbles/v2/spinner"
+	"forgejo.kube.internal.conn3r.xyz/connerlab/termsafe"
 
 	"github.com/conner-s/nfu/internal/flake"
 	"github.com/conner-s/nfu/internal/ui"
@@ -19,9 +21,14 @@ func segModel() model {
 		spinner:     spinner.New(spinner.WithSpinner(spinner.Dot)),
 		now:         1_784_170_000,
 		checking:    map[string]bool{},
-		upstream:    map[string]flake.Input{},
-		upstreamErr: map[string]string{},
+		upstream:    map[string]probed{},
+		upstreamErr: map[string]termsafe.Text{},
 	}
+}
+
+// answer is a probe's result as the model stores it when an upstreamMsg lands.
+func answer(in flake.Input) probed {
+	return probed{in: in, pin: ui.Pin(in.Pin())}
 }
 
 func TestUpstreamSegmentUnprobed(t *testing.T) {
@@ -42,7 +49,7 @@ func TestUpstreamSegmentChecking(t *testing.T) {
 
 func TestUpstreamSegmentError(t *testing.T) {
 	m := segModel()
-	m.upstreamErr["nixpkgs"] = "boom: no route to host"
+	m.upstreamErr["nixpkgs"] = ui.ErrLine(errors.New("boom: no route to host"))
 	got := m.upstreamSegment(flake.Input{Name: "nixpkgs", Rev: "aaaaaaa"})
 	if !strings.Contains(got, "! boom: no route to host") {
 		t.Errorf("error segment = %q, want the error text with a ! marker", got)
@@ -54,7 +61,7 @@ func TestUpstreamSegmentUpToDate(t *testing.T) {
 	// A narHash-pinned input (no Rev): up-to-date must be decided by Pin()
 	// equality, not Rev, so this guards that the comparison uses Pin().
 	in := flake.Input{Name: "flake-utils", NarHash: "sha256-ABC="}
-	m.upstream["flake-utils"] = flake.Input{Name: "flake-utils", NarHash: "sha256-ABC="}
+	m.upstream["flake-utils"] = answer(flake.Input{Name: "flake-utils", NarHash: "sha256-ABC="})
 	got := m.upstreamSegment(in)
 	if !strings.Contains(got, "up to date") || !strings.Contains(got, ui.GlyphUnchanged) {
 		t.Errorf("up-to-date segment = %q, want the unchanged glyph + 'up to date'", got)
@@ -68,7 +75,7 @@ func TestUpstreamSegmentMoved(t *testing.T) {
 	m := segModel()
 	in := flake.Input{Name: "nixpkgs", Rev: "1111111111111111111111111111111111111111", LastModified: m.now - 3*24*3600}
 	up := flake.Input{Name: "nixpkgs", Rev: "2222222222222222222222222222222222222222", LastModified: m.now - 90}
-	m.upstream["nixpkgs"] = up
+	m.upstream["nixpkgs"] = answer(up)
 	got := m.upstreamSegment(in)
 	if !strings.Contains(got, ui.GlyphArrow) {
 		t.Errorf("moved segment should show the arrow: %q", got)

@@ -4,11 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 	"unicode/utf8"
+
+	"forgejo.kube.internal.conn3r.xyz/connerlab/termsafe"
 
 	"github.com/conner-s/nfu/internal/config"
 	"github.com/conner-s/nfu/internal/flake"
@@ -97,7 +99,7 @@ func streamUpdate(ctx context.Context, g globalFlags, cfg *config.Config, client
 		return updErr // nothing ran (e.g. unknown input): report and stop
 	}
 	committed, commitMsg, warn := lock.Commit(ctx, client.Root(), results, commitEnabled(g, cfg))
-	emitFooter(s, results, committed, commitMsg, warn, updErr)
+	emitFooter(os.Stdout, os.Stderr, s, results, committed, ui.Line(commitMsg), ui.Line(warn), updErr)
 	return updErr
 }
 
@@ -119,19 +121,19 @@ type streamReporter struct {
 func (r *streamReporter) Plan(names []string) {
 	fmt.Print(titleLine(r.s, r.root))
 	for _, n := range names {
-		r.wn = max(r.wn, utf8.RuneCountInString(n))
+		r.wn = max(r.wn, utf8.RuneCountInString(ui.Name(n).String()))
 	}
 }
 
 func (r *streamReporter) Start(name string) {
 	r.current = name
-	r.sp = r.s.StartSpinner(os.Stdout, r.tty, ui.RenderUpdatingText(r.s, name, r.wn))
+	r.sp = r.s.StartSpinner(os.Stdout, r.tty, ui.RenderUpdatingText(r.s, ui.Name(name), r.wn))
 }
 
 func (r *streamReporter) Done(res flake.UpdateResult) {
 	r.sp.Stop()
 	r.sp, r.current = nil, ""
-	fmt.Print(ui.RenderResultRow(r.s, res, r.wn, r.now))
+	fmt.Print(ui.RenderResultRow(r.s, ui.NewResultRow(res), r.wn, r.now))
 }
 
 // finish clears any in-flight spinner; when the run failed mid-input, the
@@ -142,7 +144,7 @@ func (r *streamReporter) finish(failed bool) {
 		r.sp = nil
 	}
 	if failed && r.current != "" {
-		fmt.Print(ui.RenderFailedRow(r.s, r.current, r.wn))
+		fmt.Print(ui.RenderFailedRow(r.s, ui.Name(r.current), r.wn))
 	}
 }
 
@@ -186,9 +188,9 @@ func previewUpdate(ctx context.Context, g globalFlags, cfg *config.Config, clien
 	}
 	s := ui.StylesFor(cfg.Theme)
 	fmt.Print(titleLine(s, client.Root()))
-	fmt.Print(ui.RenderInputList(s, inputs, now))
+	fmt.Print(ui.RenderInputList(s, ui.InputRows(inputs), now))
 	fmt.Printf("\n%s %s\n", s.Dim.Render("would run"),
-		s.Value.Render("nix flake update "+strings.Join(names, " ")))
+		s.Value.Render(ui.Linef("nix flake update %s", ui.Names(names, " ")).String()))
 	return nil
 }
 
@@ -196,27 +198,31 @@ func previewUpdate(ctx context.Context, g globalFlags, cfg *config.Config, clien
 // updErr != nil the run stopped early, so the happy "up to date" / "updated N"
 // summary is suppressed — main prints the actual error — and only what
 // genuinely moved is counted.
-func emitFooter(s ui.Styles, results []flake.UpdateResult, committed bool, commitMsg, warn string, updErr error) {
+//
+// The commit subject names inputs and pins from flake.lock, and the warning
+// can quote git, so both arrive as termsafe.Text. out and errOut are stdout
+// and stderr.
+func emitFooter(out, errOut io.Writer, s ui.Styles, results []flake.UpdateResult, committed bool, commitMsg, warn termsafe.Text, updErr error) {
 	moved := 0
 	for _, r := range results {
 		if r.Moved() {
 			moved++
 		}
 	}
-	fmt.Println()
+	fmt.Fprintln(out)
 	switch {
 	case updErr != nil:
-		fmt.Println(s.Bad.Render("update did not complete"))
+		fmt.Fprintln(out, s.Bad.Render("update did not complete"))
 	case moved == 0:
-		fmt.Println(s.Dim.Render("everything already up to date"))
+		fmt.Fprintln(out, s.Dim.Render("everything already up to date"))
 	default:
-		fmt.Println(s.Value.Render(fmt.Sprintf("updated %s", countInputs(moved))))
+		fmt.Fprintln(out, s.Value.Render(fmt.Sprintf("updated %s", countInputs(moved))))
 	}
 	if committed {
-		fmt.Printf("%s %s\n", s.Good.Render("committed flake.lock:"), s.Dim.Render(commitMsg))
+		fmt.Fprintf(out, "%s %s\n", s.Good.Render("committed flake.lock:"), s.Dim.Render(commitMsg.String()))
 	}
-	if warn != "" {
-		fmt.Fprintln(os.Stderr, s.Warn.Render("! "+warn))
+	if !warn.IsEmpty() {
+		fmt.Fprintln(errOut, s.Warn.Render("! "+warn.String()))
 	}
 }
 
@@ -227,12 +233,18 @@ func countInputs(n int) string {
 	return fmt.Sprintf("%d inputs", n)
 }
 
-// titleLine renders "<basename>  <full path>".
+// titleLine renders "<basename>  <full path>". The flake's path comes from
+// the configuration, a flag or the environment, and is cleaned here.
 func titleLine(s ui.Styles, root string) string {
-	return fmt.Sprintf("%s  %s\n\n", s.Title.Render(filepath.Base(root)), s.Dim.Render(root))
+	return ui.TitleLine(s, ui.Line(filepath.Base(root)), ui.Line(root))
 }
 
 // --- JSON output ---
+//
+// --json is data for another program, so it carries every value as it is:
+// names, pins, nix's own words in `transition` and `error`. encoding/json
+// escapes the C0 controls, ESC among them, so no escape sequence leaves this
+// way; a C1 control, a bidirectional control or an invisible character does.
 
 type jsonResult struct {
 	Input           string `json:"input"`

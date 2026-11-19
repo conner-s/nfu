@@ -17,10 +17,12 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"charm.land/bubbles/v2/spinner"
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
+	"forgejo.kube.internal.conn3r.xyz/connerlab/termsafe"
 
 	"github.com/conner-s/nfu/internal/config"
 	"github.com/conner-s/nfu/internal/flake"
@@ -69,11 +71,15 @@ const (
 
 // Messages private to the manager. Run events flow through runState.events and
 // are pumped one at a time by waitEvent.
+//
+// A runLineMsg is a line for the run pane's log. Its text is what nh, deploy,
+// nix or git wrote, or quotes a flake.lock, so it is a termsafe.Text: the
+// engine cannot put a raw string on the screen.
 type (
 	runStepStartMsg struct{ step int }
 	runLineMsg      struct {
 		step int
-		text string
+		text termsafe.Text
 		tone tone
 	}
 	runStepEndMsg struct {
@@ -101,13 +107,15 @@ const (
 )
 
 // runStep is one pipeline step as the run view shows it. verb selects the color
-// (update/switch/deploy); the engine reports progress by step index.
+// (update/switch/deploy); the engine reports progress by step index. verb and
+// icon are nfu's own; title, detail and cmd name inputs, hosts and paths, and
+// are cleaned where the step is built (stepsForPlan).
 type runStep struct {
 	verb   string
 	icon   string
-	title  string
-	detail string
-	cmd    string
+	title  termsafe.Text
+	detail termsafe.Text
+	cmd    termsafe.Text
 	done   bool
 	failed bool
 	dur    time.Duration
@@ -115,14 +123,17 @@ type runStep struct {
 
 type runLine struct {
 	step int
-	text string
+	text termsafe.Text
 	tone tone
 }
 
 // runState is the live (or finished) run the run view renders. Only the update
-// loop mutates it; the engine goroutine communicates via events.
+// loop mutates it; the engine goroutine communicates via events. name is the
+// project's name as the run history is keyed by it; title is that name as it
+// is drawn.
 type runState struct {
 	name        string
+	title       termsafe.Text
 	plan        project.Plan
 	steps       []runStep
 	dry         bool
@@ -155,7 +166,7 @@ type managerModel struct {
 	sel      int
 	top      int // first visible list row (scroll window)
 	filterOn bool
-	filter   string
+	filter   string // what the user typed, cleaned as it was typed (keyList)
 
 	inputs       []flake.Input
 	inputsLoaded bool
@@ -166,7 +177,7 @@ type managerModel struct {
 	runCancel context.CancelFunc
 	runNo     int
 
-	toast     string
+	toast     termsafe.Text
 	toastTone tone
 	toastGen  int
 
@@ -226,7 +237,7 @@ func (m managerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case toastClearMsg:
 		if msg.gen == m.toastGen {
-			m.toast = ""
+			m.toast = termsafe.Text{}
 		}
 		return m, nil
 
@@ -236,7 +247,7 @@ func (m managerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if msg.err != nil {
 			m.view = m.back
-			return m, m.say("✗ "+shortErr(msg.err), toneBad)
+			return m, m.sayErr("", msg.err)
 		}
 		m.inputs, m.inputsLoaded = msg.inputs, true
 		return m, m.showForm()
@@ -246,10 +257,10 @@ func (m managerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case editorDoneMsg:
 		if msg.err != nil {
-			return m, m.say("✗ editor: "+shortErr(msg.err), toneBad)
+			return m, m.sayErr("editor: ", msg.err)
 		}
 		m.reload()
-		return m, m.say("reloaded projects", toneDim)
+		return m, m.say(ui.Words("reloaded projects"), toneDim)
 
 	case runTickMsg:
 		if m.run != nil && m.run.status == runRunning && !m.run.waitingSudo {
@@ -316,8 +327,9 @@ func (m managerModel) keyList(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		case "enter":
 			m.filterOn = false
 		case "backspace":
-			if len(m.filter) > 0 {
-				m.filter = m.filter[:len(m.filter)-1]
+			// One character, not one byte: half a character is a raw byte.
+			if _, size := utf8.DecodeLastRuneInString(m.filter); size > 0 {
+				m.filter = m.filter[:len(m.filter)-size]
 			}
 			m.snapSelection()
 		default:
@@ -325,8 +337,14 @@ func (m managerModel) keyList(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			// (empty for pure modifiers and named keys); pastes arrive as a
 			// separate tea.PasteMsg and never reach handleKey, as under v1.
 			if t := msg.Text; t != "" {
-				m.filter += t
+				// The filter is drawn as it is typed, so it is cleaned as it
+				// is typed, and the user is told when that changed it.
+				cleaned, warning := ui.Typed("The filter text", t)
+				m.filter += cleaned
 				m.snapSelection()
+				if !warning.IsEmpty() {
+					return m, m.say(warning, toneWarn)
+				}
 			}
 		}
 		return m, nil
@@ -442,14 +460,14 @@ func (m managerModel) delegateForm(msg tea.Msg) (tea.Model, tea.Cmd) {
 	m.form = nil
 	m.view = m.back
 	if !fm.result.Saved {
-		return m, m.say("changes discarded", toneDim)
+		return m, m.say(ui.Words("changes discarded"), toneDim)
 	}
 	if err := m.deps.Persist(fm.result.Name, fm.result.Project, fm.result.HostDefs); err != nil {
-		return m, m.say("✗ save: "+shortErr(err), toneBad)
+		return m, m.sayErr("save: ", err)
 	}
 	m.reload()
 	m.selectName(fm.result.Name)
-	return m, m.say("saved ✓ → "+fm.result.Name+".toml", toneGood)
+	return m, m.say(ui.Linef("saved ✓ → %s.toml", fm.result.Name), toneGood)
 }
 
 // --- selection / filtering -------------------------------------------------
@@ -555,11 +573,11 @@ func (m managerModel) useCurrent() (tea.Model, tea.Cmd) {
 	}
 	if m.deps.SetCurrent != nil {
 		if err := m.deps.SetCurrent(e.Name); err != nil {
-			return m, m.say("✗ "+shortErr(err), toneBad)
+			return m, m.sayErr("", err)
 		}
 	}
 	m.current = e.Name
-	return m, m.say("current project: "+e.Name, toneGood)
+	return m, m.say(ui.Linef("current project: %s", e.Name), toneGood)
 }
 
 // openEdit opens the embedded form for the selected project (or a blank one).
@@ -572,7 +590,7 @@ func (m managerModel) openEdit(newProject bool) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if e.Source == project.SourceDeclared {
-			return m, m.say("read-only (declared) — edit config.toml / home-manager", toneWarn)
+			return m, m.say(ui.Words("read-only (declared) — edit config.toml / home-manager"), toneWarn)
 		}
 	}
 	m.editingNew = newProject
@@ -607,6 +625,9 @@ func (m *managerModel) showForm() tea.Cmd {
 
 // openEditor releases the terminal to $EDITOR on the project's TOML file, then
 // reloads the catalog. Declared-in-config projects have no file to open.
+//
+// While the editor runs it has the terminal: what it draws, the file's
+// contents included, does not pass through nfu and is not cleaned.
 func (m managerModel) openEditor() (tea.Model, tea.Cmd) {
 	e := m.curEntry()
 	if e == nil {
@@ -614,11 +635,11 @@ func (m managerModel) openEditor() (tea.Model, tea.Cmd) {
 	}
 	path := filepath.Join(m.deps.ProjectsDir, e.Name+".toml")
 	if _, err := os.Stat(path); err != nil {
-		return m, m.say("no file — declared in config.toml", toneWarn)
+		return m, m.say(ui.Words("no file — declared in config.toml"), toneWarn)
 	}
 	ed := strings.Fields(os.Getenv("EDITOR"))
 	if len(ed) == 0 {
-		return m, m.say("$EDITOR is not set", toneWarn)
+		return m, m.say(ui.Words("$EDITOR is not set"), toneWarn)
 	}
 	c := exec.Command(ed[0], append(ed[1:], path)...)
 	return m, tea.ExecProcess(c, func(err error) tea.Msg { return editorDoneMsg{err} })
@@ -626,12 +647,25 @@ func (m managerModel) openEditor() (tea.Model, tea.Cmd) {
 
 // --- toast -----------------------------------------------------------------
 
-// say shows a transient footer message (the prototype's toast).
-func (m *managerModel) say(text string, t tone) tea.Cmd {
+// say shows a transient footer message (the prototype's toast). It takes a
+// termsafe.Text because a toast quotes names and errors: nfu's own words go
+// through ui.Words, anything else through ui.Linef or sayErr.
+func (m *managerModel) say(text termsafe.Text, t tone) tea.Cmd {
 	m.toast, m.toastTone = text, t
 	m.toastGen++
 	gen := m.toastGen
-	return tea.Tick(2600*time.Millisecond, func(time.Time) tea.Msg { return toastClearMsg{gen} })
+	// A short toast is a glance; a long one is a warning to be read.
+	stay := 2600 * time.Millisecond
+	if utf8.RuneCountInString(text.String()) > 80 {
+		stay = 12 * time.Second
+	}
+	return tea.Tick(stay, func(time.Time) tea.Msg { return toastClearMsg{gen} })
+}
+
+// sayErr shows an error as a toast: "✗ ", what failed, and the error's first
+// line, clipped. An error from nix carries nix's stderr.
+func (m *managerModel) sayErr(what string, err error) tea.Cmd {
+	return m.say(ui.Linef("✗ %s%s", what, ui.ErrLine(err)), toneBad)
 }
 
 func (m managerModel) toneStyle(t tone) func(...string) string {
@@ -665,16 +699,17 @@ func (m managerModel) shape(e *project.Entry) (inputs []string, hosts []string, 
 
 // targetLabel summarizes where a run lands: the local host, ssh deploys, or
 // both. The second return picks the display tone (aqua local, blue remote).
-func targetLabel(hosts []string, localSwitch bool) (string, tone) {
+// The host names come from project files and are cleaned here.
+func targetLabel(hosts []string, localSwitch bool) (termsafe.Text, tone) {
 	switch {
 	case localSwitch && len(hosts) > 0:
-		return "local + ssh:" + strings.Join(hosts, ","), toneGood
+		return ui.Linef("local + ssh:%s", ui.Names(hosts, ",")), toneGood
 	case localSwitch:
-		return "local", toneGood
+		return ui.Words("local"), toneGood
 	case len(hosts) > 0:
-		return "ssh:" + strings.Join(hosts, ","), toneText
+		return ui.Linef("ssh:%s", ui.Names(hosts, ",")), toneText
 	default:
-		return "—", toneDim
+		return ui.Words("—"), toneDim
 	}
 }
 

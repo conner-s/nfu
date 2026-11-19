@@ -112,11 +112,21 @@ func TestEditDropsInlineDefWithItsHost(t *testing.T) {
 }
 
 // Editing an existing project locks the name: the filename is its identity.
+// The name is kept beside the text field, not in it, so nothing typed, pasted
+// or cleaned can change which file the save writes.
 func TestEditLocksName(t *testing.T) {
 	m := editForm(t, config.Project{Inputs: []string{"totality"}})
 	m = formStep(m, key("x"))
-	if m.name.Value() != "totality" {
-		t.Errorf("name changed while editing: %q", m.name.Value())
+	m = formStep(m, tea.PasteMsg{Content: "other"})
+	if m.fixed != "totality" || m.name.Value() != "" {
+		t.Errorf("name changed while editing: fixed %q, field %q", m.fixed, m.name.Value())
+	}
+	if !strings.Contains(m.render(), "totality") {
+		t.Errorf("the locked name is not drawn:\n%s", m.render())
+	}
+	m = formStep(m, keySave)
+	if !m.result.Saved || m.result.Name != "totality" {
+		t.Errorf("saved as %q (saved=%v), want totality", m.result.Name, m.result.Saved)
 	}
 }
 

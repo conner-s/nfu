@@ -8,6 +8,7 @@ import (
 
 	"charm.land/bubbles/v2/spinner"
 	tea "charm.land/bubbletea/v2"
+	"forgejo.kube.internal.conn3r.xyz/connerlab/termsafe"
 
 	"github.com/conner-s/nfu/internal/flake"
 	"github.com/conner-s/nfu/internal/ui"
@@ -27,8 +28,8 @@ func pickingModel() model {
 		},
 		selected:    map[int]bool{},
 		checking:    map[string]bool{},
-		upstream:    map[string]flake.Input{},
-		upstreamErr: map[string]string{},
+		upstream:    map[string]probed{},
+		upstreamErr: map[string]termsafe.Text{},
 		sem:         make(chan struct{}, probeLimit),
 	}
 }
@@ -173,7 +174,7 @@ func TestFetchHoveredFlow(t *testing.T) {
 		t.Error("checking should clear once the result arrives")
 	}
 	up, ok := m.upstream["nixpkgs"]
-	if !ok || up.Rev != "zzz" {
+	if !ok || up.in.Rev != "zzz" {
 		t.Errorf("upstream pin not recorded: %+v (ok=%v)", up, ok)
 	}
 	// Only the requested name is recorded, not siblings.
@@ -214,7 +215,7 @@ func TestFetchErrorRecorded(t *testing.T) {
 	if m.checking["nixpkgs"] {
 		t.Error("checking should clear even on error")
 	}
-	if m.upstreamErr["nixpkgs"] == "" {
+	if m.upstreamErr["nixpkgs"].IsEmpty() {
 		t.Error("a probe error should be recorded for the row")
 	}
 }
@@ -245,7 +246,7 @@ func TestFetchAllFlow(t *testing.T) {
 	if len(m.checking) != 0 {
 		t.Errorf("all checking should clear once every probe answers, got %v", m.checking)
 	}
-	if m.upstream["nixpkgs"].Rev != "new1" || m.upstream["totality"].Rev != "new2" {
+	if m.upstream["nixpkgs"].in.Rev != "new1" || m.upstream["totality"].in.Rev != "new2" {
 		t.Errorf("both upstream pins should be recorded: %+v", m.upstream)
 	}
 	if _, ok := m.upstream["mirror"]; ok {
@@ -302,27 +303,33 @@ func TestUpstreamMsgReanchorsNow(t *testing.T) {
 	}
 }
 
-func TestShortErr(t *testing.T) {
-	// Multi-line collapses to the first line, trimmed (guards row corruption).
-	if got := shortErr(errors.New("  first line \nsecond line")); got != "first line" {
-		t.Errorf("multi-line shortErr = %q, want %q", got, "first line")
+// ui.ErrLine is what a probe's error becomes in a row and a failure in a
+// toast: the first line, trimmed, clipped to 64 characters. It replaced this
+// package's shortErr, which ended a clipped line in "…"; a termsafe.Text is
+// clipped by Truncate, which ends it in "...".
+func TestErrLine(t *testing.T) {
+	line := func(s string) string { return ui.ErrLine(errors.New(s)).String() }
+	if got := line("  first line \nsecond line"); got != "first line" {
+		t.Errorf("multi-line = %q, want %q", got, "first line")
 	}
-	// Short single-line returned verbatim.
-	if got := shortErr(errors.New("nope")); got != "nope" {
-		t.Errorf("short shortErr = %q, want %q", got, "nope")
+	// A lone carriage return ends a line too: nix redraws with them.
+	if got := line("first\rsecond"); got != "first" {
+		t.Errorf("carriage return = %q, want %q", got, "first")
 	}
-	// Long ASCII capped to 64 runes ending in an ellipsis.
-	got := shortErr(errors.New(strings.Repeat("x", 200)))
-	if utf8.RuneCountInString(got) != 64 || !strings.HasSuffix(got, "…") {
-		t.Errorf("capped shortErr = %q (%d runes), want 64 runes ending in …", got, utf8.RuneCountInString(got))
+	if got := line("nope"); got != "nope" {
+		t.Errorf("short = %q, want %q", got, "nope")
 	}
-	// Multibyte truncation stays valid UTF-8 and rune-counted (not byte-sliced).
-	got = shortErr(errors.New(strings.Repeat("→", 200)))
+	got := line(strings.Repeat("x", 200))
+	if utf8.RuneCountInString(got) != 64 || !strings.HasSuffix(got, "...") {
+		t.Errorf("capped = %q (%d characters), want 64 ending in ...", got, utf8.RuneCountInString(got))
+	}
+	// A multibyte line must be cut on a character boundary.
+	got = line(strings.Repeat("→", 200))
 	if !utf8.ValidString(got) {
-		t.Errorf("capped multibyte shortErr is not valid UTF-8: %q", got)
+		t.Errorf("capped multibyte line is not valid UTF-8: %q", got)
 	}
 	if utf8.RuneCountInString(got) != 64 {
-		t.Errorf("capped multibyte shortErr = %d runes, want 64", utf8.RuneCountInString(got))
+		t.Errorf("capped multibyte line = %d characters, want 64", utf8.RuneCountInString(got))
 	}
 }
 
@@ -383,7 +390,7 @@ func TestFetchAllIsOneProbePerInput(t *testing.T) {
 	m := pickingModel()
 	m = step(m, key("F"))
 	m = step(m, upstreamMsg{name: "nixpkgs", err: errTestProbe})
-	if m.upstreamErr["nixpkgs"] == "" {
+	if m.upstreamErr["nixpkgs"].IsEmpty() {
 		t.Error("the failing input should carry the error")
 	}
 	if _, ok := m.upstreamErr["totality"]; ok {

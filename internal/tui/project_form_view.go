@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
+	"forgejo.kube.internal.conn3r.xyz/connerlab/termsafe"
 
 	"github.com/conner-s/nfu/internal/ui"
 )
@@ -37,6 +38,9 @@ func (m formModel) render() string {
 	if m.err != "" {
 		fmt.Fprintf(&b, "\n%s\n", s.Bad.Render("✗ "+m.err))
 	}
+	if !m.notice.IsEmpty() {
+		fmt.Fprintf(&b, "\n%s\n", s.Warn.Render(m.notice.String()))
+	}
 	fmt.Fprintf(&b, "\n%s\n", s.Help.Render(m.footer()))
 	return b.String()
 }
@@ -52,7 +56,7 @@ func (m formModel) sectionLabel(s ui.Styles, sec section, text string) string {
 func (m formModel) viewName(s ui.Styles) string {
 	val := m.name.View()
 	if m.editing {
-		val = s.Value.Render(m.name.Value()) + s.Dim.Render("  (fixed)")
+		val = s.Value.Render(ui.Name(m.fixed).String()) + s.Dim.Render("  (fixed)")
 	}
 	return fmt.Sprintf("%s  %s\n\n", m.sectionLabel(s, secName, "name"), val)
 }
@@ -65,7 +69,9 @@ func (m formModel) viewInputs(s ui.Styles) string {
 		fmt.Fprintf(&b, "    %s\n\n", s.Dim.Render("no inputs found"))
 		return b.String()
 	}
+	// in is what is selected and saved; row is what is drawn.
 	for i, in := range sel {
+		row := ui.NewInputRow(in)
 		box := "[ ]"
 		if m.inSel[in.Name] {
 			box = s.Good.Render("[x]")
@@ -74,15 +80,15 @@ func (m formModel) viewInputs(s ui.Styles) string {
 		if m.section == secInputs && !m.hostEdit && i == m.inCursor {
 			cursor = s.Value.Render("▸ ")
 		}
-		name := s.Value.Render(in.Name)
+		name := s.Value.Render(row.Name.String())
 		if !m.inSel[in.Name] {
-			name = s.Label.Render(in.Name)
+			name = s.Label.Render(row.Name.String())
 		}
 		gone := ""
 		if m.inGone[in.Name] {
 			gone = s.Warn.Render("  (not in the flake)")
 		}
-		fmt.Fprintf(&b, "  %s%s %s%s\n", cursor, box, name, gone)
+		fmt.Fprintf(&b, "  %s%s %s%s%s\n", cursor, box, name, gone, noteSuffix(s, row.Note))
 	}
 	b.WriteString("\n")
 	return b.String()
@@ -113,13 +119,14 @@ func (m formModel) viewHosts(s ui.Styles) string {
 		}
 		args := ""
 		if len(h.args) > 0 {
-			args = s.Dim.Render("  " + joinArgs(h.args))
+			args = s.Dim.Render("  " + ui.Names(h.args, " ").String())
 		}
 		tag := ""
 		if !h.known {
 			tag = s.Dim.Render("  (custom)")
 		}
-		fmt.Fprintf(&b, "  %s%s %s%s%s\n", cursor, box, s.Value.Render(h.name), args, tag)
+		fmt.Fprintf(&b, "  %s%s %s%s%s%s\n", cursor, box, s.Value.Render(ui.Name(h.name).String()), args, tag,
+			noteSuffix(s, ui.HostNameNote(h.name)))
 	}
 	if m.hostEdit {
 		b.WriteString(m.viewHostEdit(s))
@@ -154,4 +161,13 @@ func (m formModel) footer() string {
 	default: // name
 		return "type name · tab next section · ctrl+s save · esc cancel"
 	}
+}
+
+// noteSuffix renders, after a row, why its name deserves a second look
+// (ui.InputNameNote, ui.HostNameNote), or nothing.
+func noteSuffix(s ui.Styles, note termsafe.Text) string {
+	if note.IsEmpty() {
+		return ""
+	}
+	return "  " + s.Warn.Render("! "+note.String())
 }

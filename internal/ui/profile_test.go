@@ -24,8 +24,8 @@ func renderedLines(s Styles) string {
 	res := flake.UpdateResult{Input: "nixpkgs", OldPin: "aaaaaaabbbbbbb", NewPin: "cccccccddddddd", NewMod: 1_784_100_000}
 
 	var b bytes.Buffer
-	fmt.Fprintln(&b, RenderInputList(s, inputs, 1_784_170_000))
-	fmt.Fprintln(&b, RenderResultRow(s, res, 10, 1_784_170_000))
+	fmt.Fprintln(&b, RenderInputList(s, InputRows(inputs), 1_784_170_000))
+	fmt.Fprintln(&b, RenderResultRow(s, NewResultRow(res), 10, 1_784_170_000))
 	fmt.Fprintln(&b, s.Warn.Render("! lock file is dirty"))
 	return b.String()
 }

@@ -29,7 +29,7 @@ func (m model) render() string {
 
 	case stateUpdating:
 		return fmt.Sprintf("\n  %s %s\n", m.spinner.View(),
-			s.Value.Render("updating ")+s.Dim.Render(m.buildUpdatingLabel())+s.Dim.Render(" …"))
+			s.Value.Render("updating ")+s.Dim.Render(m.updating.String())+s.Dim.Render(" …"))
 
 	case stateDone:
 		return m.doneView()
@@ -38,9 +38,8 @@ func (m model) render() string {
 }
 
 func (m model) header() string {
-	s := m.styles
 	root := m.client.Root()
-	return fmt.Sprintf("%s  %s\n\n", s.Title.Render(filepath.Base(root)), s.Dim.Render(root))
+	return ui.TitleLine(m.styles, ui.Line(filepath.Base(root)), ui.Line(root))
 }
 
 func (m model) pickView() string {
@@ -48,43 +47,47 @@ func (m model) pickView() string {
 	var b strings.Builder
 	b.WriteString(m.header())
 
+	// The rows are what is drawn. m.inputs stays what is selected, compared
+	// and passed to nix.
+	rows := ui.InputRows(m.inputs)
+
 	// Column widths from the plain text. The ref+age "tail" is padded to a shared
 	// width too, but only across rows that carry an upstream segment, so those
 	// segments line up into a column under `F` without padding segment-less rows.
 	var wn, wt, wp, wr int
-	tails := make([]string, len(m.inputs))
-	segs := make([]string, len(m.inputs))
-	for i, in := range m.inputs {
-		wn = maxi(wn, utf8.RuneCountInString(in.Name))
-		wt = maxi(wt, utf8.RuneCountInString(in.Type))
-		wp = maxi(wp, utf8.RuneCountInString(ui.ShortPin(in.Pin())))
-		ref := in.Ref
-		if in.Follows {
+	tails := make([]string, len(rows))
+	segs := make([]string, len(rows))
+	for i, r := range rows {
+		wn = maxi(wn, utf8.RuneCountInString(r.Name.String()))
+		wt = maxi(wt, utf8.RuneCountInString(r.Type.String()))
+		wp = maxi(wp, utf8.RuneCountInString(r.Pin.String()))
+		ref := r.Ref.String()
+		if r.Follows {
 			ref = "follows"
 		}
-		tails[i] = strings.TrimSpace(ref + "  " + ui.RelAge(in.LastModified, m.now))
-		segs[i] = m.upstreamSegment(in)
+		tails[i] = strings.TrimSpace(ref + "  " + ui.RelAge(r.LastModified, m.now))
+		segs[i] = m.upstreamSegment(m.inputs[i])
 		if segs[i] != "" {
 			wr = maxi(wr, utf8.RuneCountInString(tails[i]))
 		}
 	}
 
-	for i, in := range m.inputs {
+	for i, r := range rows {
 		cursor := "  "
 		if i == m.cursor {
 			cursor = s.Title.Render("❯ ")
 		}
 		var box string
 		switch {
-		case in.Follows:
+		case r.Follows:
 			box = s.Dim.Render(ui.GlyphFollows + " ")
 		case m.selected[i]:
 			box = s.Good.Render("[x]")
 		default:
 			box = s.Dim.Render("[ ]")
 		}
-		name := padRight(in.Name, wn)
-		if in.Follows {
+		name := padRight(r.Name.String(), wn)
+		if r.Follows {
 			name = s.Dim.Render(name)
 		} else if m.selected[i] {
 			name = s.Good.Render(name)
@@ -97,14 +100,18 @@ func (m model) pickView() string {
 		}
 		line := fmt.Sprintf("%s%s %s  %s  %s  %s",
 			cursor, box, name,
-			s.Label.Render(padRight(in.Type, wt)),
-			s.Value.Render(padRight(ui.ShortPin(in.Pin()), wp)),
+			s.Label.Render(padRight(r.Type.String(), wt)),
+			s.Value.Render(padRight(r.Pin.String(), wp)),
 			s.Dim.Render(tail),
 		)
 		if segs[i] != "" {
 			line += "  " + segs[i]
 		}
-		b.WriteString(strings.TrimRight(line, " ") + "\n")
+		line = strings.TrimRight(line, " ")
+		if !r.Note.IsEmpty() {
+			line += "  " + s.Warn.Render("! "+r.Note.String())
+		}
+		b.WriteString(line + "\n")
 	}
 
 	n := len(m.selectedNames())
@@ -121,7 +128,8 @@ func (m model) pickView() string {
 // until the input has been checked (`f`/`F`). While a probe is in flight it shows
 // a spinner; on success it shows either "up to date" or the moved pin with both
 // its relative age and absolute timestamp (the diff the hotkeys exist to surface);
-// on failure it shows a short error marker.
+// on failure it shows a short error marker. in is the locked input: it is the
+// key and the pin to compare with, and nothing of it is drawn here.
 func (m model) upstreamSegment(in flake.Input) string {
 	s := m.styles
 	name := in.Name
@@ -129,19 +137,19 @@ func (m model) upstreamSegment(in flake.Input) string {
 		return m.spinner.View() + s.Dim.Render("checking upstream…")
 	}
 	if e, ok := m.upstreamErr[name]; ok {
-		return s.Warn.Render("! " + e)
+		return s.Warn.Render("! " + e.String())
 	}
 	up, ok := m.upstream[name]
 	if !ok {
 		return ""
 	}
-	if up.Pin() == in.Pin() {
+	if up.in.Pin() == in.Pin() {
 		return s.Dim.Render(ui.GlyphUnchanged + " up to date")
 	}
 	return fmt.Sprintf("%s %s  %s",
 		s.Dim.Render(ui.GlyphArrow),
-		s.Good.Render(ui.ShortPin(up.Pin())),
-		s.Dim.Render(ui.RelAge(up.LastModified, m.now)+" ("+ui.AbsTime(up.LastModified)+")"),
+		s.Good.Render(up.pin.String()),
+		s.Dim.Render(ui.RelAge(up.in.LastModified, m.now)+" ("+ui.AbsTime(up.in.LastModified)+")"),
 	)
 }
 
@@ -166,11 +174,11 @@ func (m model) doneView() string {
 	if m.canceled && m.results == nil {
 		// Cancelled from the picker (or nothing selectable): leave the input list
 		// on screen, nothing more.
-		return m.header() + ui.RenderInputList(s, m.inputs, m.now) + "\n" + s.Dim.Render("(no changes)") + "\n"
+		return m.header() + ui.RenderInputList(s, ui.InputRows(m.inputs), m.now) + "\n" + s.Dim.Render("(no changes)") + "\n"
 	}
 	var b strings.Builder
 	b.WriteString(m.header())
-	b.WriteString(ui.RenderResults(s, m.results, m.now))
+	b.WriteString(ui.RenderResults(s, ui.ResultRows(m.results), m.now))
 	b.WriteString("\n")
 
 	moved := 0
@@ -192,10 +200,10 @@ func (m model) doneView() string {
 		b.WriteString(s.Value.Render(fmt.Sprintf("updated %d inputs", moved)) + "\n")
 	}
 	if m.committed {
-		b.WriteString(s.Good.Render("committed flake.lock:") + " " + s.Dim.Render(m.commitMsg) + "\n")
+		b.WriteString(s.Good.Render("committed flake.lock:") + " " + s.Dim.Render(m.commitMsg.String()) + "\n")
 	}
-	if m.warn != "" {
-		b.WriteString(s.Warn.Render("! "+m.warn) + "\n")
+	if !m.warn.IsEmpty() {
+		b.WriteString(s.Warn.Render("! "+m.warn.String()) + "\n")
 	}
 	return b.String()
 }

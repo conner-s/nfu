@@ -35,15 +35,15 @@ func TestSpinnerDrawsAndClears(t *testing.T) {
 func TestRenderResultRowAlignsAndFailedRow(t *testing.T) {
 	s := NewStyles()
 	r := flake.UpdateResult{Input: "npk", OldPin: "same", NewPin: "same", Unchanged: true}
-	row := RenderResultRow(s, r, 8, 1_784_100_000)
+	row := RenderResultRow(s, NewResultRow(r), 8, 1_784_100_000)
 	if !strings.Contains(row, "npk     ") { // padded to the batch's widest name
 		t.Errorf("row should pad the name to nameWidth:\n%q", row)
 	}
-	fail := RenderFailedRow(s, "totality", 8)
+	fail := RenderFailedRow(s, Name("totality"), 8)
 	if !strings.Contains(fail, GlyphError) || !strings.Contains(fail, "update failed") {
 		t.Errorf("failed row missing glyph or label:\n%q", fail)
 	}
-	upd := RenderUpdatingText(s, "npk", 8)
+	upd := RenderUpdatingText(s, Name("npk"), 8)
 	if !strings.Contains(upd, "updating…") {
 		t.Errorf("updating text missing label:\n%q", upd)
 	}

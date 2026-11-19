@@ -18,7 +18,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
-	"forgejo.kube.internal.conn3r.xyz/connerlab/termsafe"
+	"github.com/conner-s/termsafe"
 
 	"github.com/conner-s/nfu/internal/project"
 	"github.com/conner-s/nfu/internal/ui"

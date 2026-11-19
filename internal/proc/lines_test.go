@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"forgejo.kube.internal.conn3r.xyz/connerlab/termsafe"
+	"github.com/conner-s/termsafe"
 )
 
 // collect returns an onLine callback that appends each cleaned line to got.

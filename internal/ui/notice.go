@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"forgejo.kube.internal.conn3r.xyz/connerlab/termsafe"
+	"github.com/conner-s/termsafe"
 
 	"github.com/conner-s/nfu/internal/flake"
 )
@@ -40,13 +40,20 @@ func CutNote(n int) termsafe.Text {
 // decision to the user.
 func ArgWarning(what, raw string) termsafe.Text {
 	shown, rep := termsafe.Mark.LineReport(raw)
+	held := rep.String()
 	if !rep.Changed() {
-		return termsafe.Text{}
+		if shown.String() == raw {
+			return termsafe.Text{}
+		}
+		// The report does not count white space, but a line break or a tab
+		// (a line or paragraph separator among them) is drawn as a space,
+		// so what is shown is not what is used here either.
+		held = "a line break or a tab"
 	}
 	return Words(fmt.Sprintf(
 		"WARNING: %s holds %s. It is shown as %q and used as it was given. "+
 			"Text like that can make one name pass for another: check it before you go on.",
-		what, rep, shown.String()))
+		what, held, shown.String()))
 }
 
 // Typed cleans text that goes into one of the TUIs' fields: typed, pasted, or

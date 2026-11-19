@@ -8,7 +8,7 @@ import (
 	"os"
 	"os/exec"
 
-	"forgejo.kube.internal.conn3r.xyz/connerlab/termsafe"
+	"github.com/conner-s/termsafe"
 )
 
 // RunLines runs name with args in dir, streaming its combined stdout+stderr to

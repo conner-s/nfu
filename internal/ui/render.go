@@ -6,7 +6,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"forgejo.kube.internal.conn3r.xyz/connerlab/termsafe"
+	"github.com/conner-s/termsafe"
 )
 
 // ShortPin abbreviates a locked pin: a 40-char git rev becomes its 7-char short

@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"forgejo.kube.internal.conn3r.xyz/connerlab/termsafe"
+	"github.com/conner-s/termsafe"
 
 	"github.com/conner-s/nfu/internal/flake"
 )
@@ -114,6 +114,11 @@ func TestArgWarning(t *testing.T) {
 		`Text like that can make one name pass for another: check it before you go on.`
 	if got != want {
 		t.Errorf("ArgWarning = %q\n       want %q", got, want)
+	}
+	// White space the report does not count is still not what is shown.
+	got = ArgWarning("An argument", "nix\tpkgs"+string(rune(0x2028))).String()
+	if !strings.HasPrefix(got, `WARNING: An argument holds a line break or a tab. It is shown as "nix pkgs "`) {
+		t.Errorf("ArgWarning for white space = %q", got)
 	}
 	// The warning is nfu's words and the cleaned text: nothing that was
 	// removed, not even as plain text.

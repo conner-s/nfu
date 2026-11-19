@@ -10,7 +10,7 @@ import (
 
 	"charm.land/bubbles/v2/spinner"
 	tea "charm.land/bubbletea/v2"
-	"forgejo.kube.internal.conn3r.xyz/connerlab/termsafe"
+	"github.com/conner-s/termsafe"
 
 	"github.com/conner-s/nfu/internal/flake"
 	"github.com/conner-s/nfu/internal/lock"

@@ -6,7 +6,7 @@ Whoever wrote a flake chose its input names and pins, a project file can come
 from anyone's repository, and an error quotes a remote server. A terminal acts
 on control sequences wherever they appear, and bubbletea 2.1 replays some of
 them from a view's text, so all of it is cleaned by the `termsafe` module
-(`forgejo.kube.internal.conn3r.xyz/connerlab/termsafe`) before it is drawn or
+(`github.com/conner-s/termsafe`) before it is drawn or
 printed.
 
 This page traces each path from where the text comes from to where it is
@@ -197,7 +197,7 @@ says what holds that, and it is never the display cleaning.
 ## Tests that hold this in place
 
 - The termsafe module's own tests, which run in its repository.
-- `internal/tui/hostile_test.go`: the module's 24 hostile samples through
+- `internal/tui/hostile_test.go`: the module's hostile samples (28 in v0.2.0) through
   each of the 33 ways outside text enters the three TUIs, checked in the
   view's string (`termsafe.ViewProblem`) and in the bytes a real bubbletea
   program writes (`termsafe.TerminalProblem`).

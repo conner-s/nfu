@@ -3,6 +3,8 @@ package project
 import (
 	"fmt"
 	"strings"
+
+	"github.com/conner-s/nfu/internal/flake"
 )
 
 // HostStep is one deploy target in a plan: the host name plus the resolved extra
@@ -46,6 +48,13 @@ func BuildPlan(c *Catalog, name string, commit bool) (Plan, error) {
 	}
 	if len(r.Inputs) == 0 {
 		return Plan{}, fmt.Errorf("project %q has no inputs to update", name)
+	}
+	// A plan is what nix will be asked to do, so an input nix cannot be asked
+	// for by name makes it no plan at all: it is refused here, where the dry
+	// run, the confirm prompt and the manager all get it from, and again by
+	// internal/flake when a run reaches it.
+	if err := flake.CheckInputNames(r.Inputs...); err != nil {
+		return Plan{}, fmt.Errorf("project %q: %w", name, err)
 	}
 	plan := Plan{
 		Name:        name,

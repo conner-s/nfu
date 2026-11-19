@@ -1,11 +1,13 @@
 package project
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/conner-s/nfu/internal/config"
+	"github.com/conner-s/nfu/internal/flake"
 )
 
 func TestStateRoundTrip(t *testing.T) {
@@ -242,5 +244,41 @@ func TestSaveRefusesReadOnly(t *testing.T) {
 	}
 	if err := Remove(projDir, "totality"); err == nil {
 		t.Error("Remove of a read-only file should refuse")
+	}
+}
+
+// A plan is what nix will be asked to do. A project that names an input nix
+// cannot be asked for by name (a lock can hold one called --refresh, and nix
+// would read that as an option) gets no plan, whichever way it came by the
+// name: its own inputs or a project it includes.
+func TestBuildPlanRefusesInputNamesNixCannotUpdate(t *testing.T) {
+	cfg := &config.Config{Projects: map[string]config.Project{
+		"direct":  {Inputs: []string{"nixpkgs", "--refresh"}},
+		"bundled": {Includes: []string{"direct"}},
+		"fine":    {Inputs: []string{"nixpkgs", "home-manager"}},
+	}}
+	cat := BuildCatalog(cfg, &Index{}, nil)
+	for _, name := range []string{"direct", "bundled"} {
+		_, err := BuildPlan(cat, name, true)
+		var inv *flake.InvalidInputError
+		if !errors.As(err, &inv) || len(inv.Names) != 1 || inv.Names[0] != "--refresh" {
+			t.Errorf("BuildPlan(%s) = %v, want an InvalidInputError for --refresh", name, err)
+		}
+	}
+	if _, err := BuildPlan(cat, "fine", true); err != nil {
+		t.Errorf("BuildPlan(fine): %v", err)
+	}
+}
+
+// A deploy host is the last argument, as `.#<host>`: it starts with a dot
+// whatever the host is called, so deploy cannot read it as an option. The
+// arguments before it are options on purpose: they are the host's configured
+// deployArgs.
+func TestHostStepArgvCannotMakeTheHostAnOption(t *testing.T) {
+	for _, host := range []string{"Fabricator", "-x", "--ssh-opts=-oProxyCommand=id", ""} {
+		argv := HostStep{Name: host, Args: []string{"--magic-rollback", "false"}}.Argv()
+		if len(argv) != 3 || argv[2] != ".#"+host {
+			t.Errorf("Argv for host %q = %q, want the host last as .#%s", host, argv, host)
+		}
 	}
 }

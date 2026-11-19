@@ -296,6 +296,13 @@ func (m formModel) updateInputs(key tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		sel := m.selectableInputs()
 		if m.inCursor < len(sel) {
 			n := sel[m.inCursor].Name
+			// A stored input with such a name can be unticked, never ticked:
+			// a run of the project would be refused (project.BuildPlan).
+			if !m.inSel[n] && !flake.IsInputName(n) {
+				m.err = "nix cannot update an input with that name: letters, digits, _ and - only"
+				return m, nil
+			}
+			m.err = ""
 			m.inSel[n] = !m.inSel[n]
 		}
 	}

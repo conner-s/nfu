@@ -633,7 +633,10 @@ func (m managerModel) openEditor() (tea.Model, tea.Cmd) {
 	if e == nil {
 		return m, nil
 	}
-	path := filepath.Join(m.deps.ProjectsDir, e.Name+".toml")
+	path, err := projectFilePath(m.deps.ProjectsDir, e.Name)
+	if err != nil {
+		return m, m.sayErr("", err)
+	}
 	if _, err := os.Stat(path); err != nil {
 		return m, m.say(ui.Words("no file — declared in config.toml"), toneWarn)
 	}
@@ -643,6 +646,15 @@ func (m managerModel) openEditor() (tea.Model, tea.Cmd) {
 	}
 	c := exec.Command(ed[0], append(ed[1:], path)...)
 	return m, tea.ExecProcess(c, func(err error) tea.Msg { return editorDoneMsg{err} })
+}
+
+// projectFilePath is the path of a project's file as it is handed to the
+// editor: absolute. The name is a file name from the projects directory, and
+// with a relative directory a file called `-c….toml` would reach the editor
+// as an option. An absolute path starts with a separator whatever the name is;
+// editors do not agree on `--`, so that is not what this rests on.
+func projectFilePath(dir, name string) (string, error) {
+	return filepath.Abs(filepath.Join(dir, name+".toml"))
 }
 
 // --- toast -----------------------------------------------------------------

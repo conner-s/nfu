@@ -160,6 +160,11 @@ func finishJSON(ctx context.Context, g globalFlags, cfg *config.Config, client *
 // previewUpdate (dry-run) shows the current pins of the requested inputs and the
 // command that would run, without touching flake.lock.
 func previewUpdate(ctx context.Context, g globalFlags, cfg *config.Config, client *flake.Client, names []string) error {
+	// What a real run would refuse, the preview refuses: it ends by printing
+	// the command.
+	if err := flake.CheckInputNames(names...); err != nil {
+		return err
+	}
 	now := time.Now().Unix()
 	inputs := make([]flake.Input, 0, len(names))
 	for _, n := range names {
@@ -190,7 +195,7 @@ func previewUpdate(ctx context.Context, g globalFlags, cfg *config.Config, clien
 	fmt.Print(titleLine(s, client.Root()))
 	fmt.Print(ui.RenderInputList(s, ui.InputRows(inputs), now))
 	fmt.Printf("\n%s %s\n", s.Dim.Render("would run"),
-		s.Value.Render(ui.Linef("nix flake update %s", ui.Names(names, " ")).String()))
+		s.Value.Render(ui.Linef("nix flake update -- %s", ui.Names(names, " ")).String()))
 	return nil
 }
 

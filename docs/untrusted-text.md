@@ -52,7 +52,7 @@ they are built.
 | Input name, type, ref, pin | `flake.lock`, through `nix flake metadata --json` | `ui.NewInputRow` (`ui.Name`, `ui.Line`, `ui.Pin`) | every row; the list left on screen after a cancel |
 | Why a name deserves a second look | the same name | `ui.InputNameNote` | `! …` after the row |
 | Flake path and its last element | config `flakeRoot`, `--flake`, `$NFU_FLAKE`, `$FLAKE` | `ui.Line` in `header` | title line |
-| Upstream pin | the lock nix writes for a probe (`nix flake update <name> --output-lock-file`) | `ui.Pin`, when the `upstreamMsg` lands | `→ <pin>` after the row |
+| Upstream pin | the lock nix writes for a probe (`nix flake update --output-lock-file <file> -- <name>`) | `ui.Pin`, when the `upstreamMsg` lands | `→ <pin>` after the row |
 | Probe error | nix's stderr, which quotes the remote and, for git inputs, git and ssh | `ui.ErrLine`, when the `upstreamMsg` lands | `! …` after the row |
 | Names being updated | the selected inputs | `ui.Names`, when enter is pressed | `updating …` |
 | Updated input, old and new pin | `flake.lock` before and after | `ui.NewResultRow` | result rows |
@@ -70,7 +70,8 @@ they are built.
 | Projects directory | config `projectsDir` | `ui.Line` in `viewHeader` | header |
 | Current project | the `current` marker file | `ui.Name` in `viewHeader` | header |
 | Step titles, details and commands | the plan: inputs, hosts and their deploy arguments, the flake path | `stepsForPlan` (`ui.Names`, `ui.Linef`) | detail timeline, run sidebar and header, dry-run log |
-| Names in the plan that are not what they look like | the same inputs and hosts | `Plan.Notes` (`ui.InputNameNote`, `ui.HostNameNote`) | `! …` under the timeline |
+| Hosts in the plan that are not what they look like | the same hosts | `Plan.Notes` (`ui.HostNameNote`) | `! …` under the timeline |
+| Why a project gets no plan | `project.BuildPlan`, which quotes with `%q` the input names nix cannot update | `ui.Linef`; `sayErr` when `r` or `d` is pressed | `✗ …` in the detail view; toast |
 | Why a project will not resolve | `project.Resolve`, which quotes project names with `%q` | `ui.Linef` | `✗ …` in the detail view |
 | The project as TOML | the project, marshalled again | `tomlLines` (`termsafe.Mark.Clean`, then per line) | TOML pane |
 | Log of a run: update results | `flake.lock` before and after | `ui.Linef`, `ui.Pin` in `runEngine` | run log |
@@ -136,7 +137,7 @@ the value holds, readable and inert, and it is left that way.
 | --- | --- | --- |
 | An argument or a flag's value holds a control sequence, a control character, a bidirectional control or an invisible character | The same line, printed before the TUI opens | `nfu: WARNING: An argument holds … It is shown as "…" and used as it was given. …` on stderr |
 | Text typed or pasted into a field, a name given to `nfu project add`, or a host's stored arguments opened for editing held any of those. They were removed and the cleaned text is used. | `WARNING: … nfu removed that and uses the cleaned text. …` above the form's footer until the form closes; for the manager's filter, as a toast | not applicable |
-| A flake input's name is not one nix will update: anything but ASCII letters, digits, `_` and `-`, starting with a letter. The note says what cleaning found in it and names any word that mixes scripts, by code point. | `! …` after the row in the picker and the form; under the plan in the manager | `! …` after the row in `nfu list`; under the plan of `nfu project run`; in the row of `nfu project list` |
+| A flake input's name is not one nix will update: anything but ASCII letters, digits, `_` and `-`, starting with a letter. nfu will not pass it to nix. The note says what cleaning found in it and names any word that mixes scripts, by code point. | `! …` after the row in the picker and the form. The picker shows `[!]` where the checkbox would be and will not select or probe the row; the form will not tick it. A project that names one gets no plan: `✗ … is not a name nix can update …` in the detail view and as a toast on `r` and `d`. | `! …` after the row in `nfu list` and in the row of `nfu project list`. Asked to update one, to preview it or to run a project that names one: `nfu: "…" is not a name nix can update: …`, exit 1, before nix is run. `nfu all` updates the others and ends with `nfu: not updated: …`. |
 | A deploy host's name holds something cleaning removes or marks, has a word that mixes scripts, or is not plain ASCII | `! …` after the row in the form; under the plan in the manager | under the plan of `nfu project run`; in the row of `nfu project list` |
 | Text from nix, nh or deploy had an unterminated control string. It was cut at the end of its line, and the rest of that line went with it. | An `info:` line under it in the run log | `nfu: info: …` under the error |
 | Text from a file or a tool held complete control sequences or control characters | Nothing: they are removed. In a name, the note above says so. | Nothing |
@@ -146,21 +147,44 @@ A notice counts what was removed and never draws it.
 
 The two name rules differ on purpose. A flake input's name has a registry
 rule: `nix flake update <name>` takes only `[a-zA-Z][a-zA-Z0-9_-]*`
-(`flakeIdRegexS` in nix), though a `flake.lock` can hold any string. So nfu
-holds input names to that, which also catches a name written wholly in
-another script. A deploy host is an attribute of the flake's `deploy.nodes`
-and may be any string, so nothing is required of it; nfu notes a word that
-mixes scripts and, short of that, any name that is not plain ASCII, because
-the mixed-script check cannot see a name written wholly in look-alike letters.
-Neither note changes what nfu does with the name. Project names are not
-noted: `nfu project add` and the form accept only ASCII letters, digits, `-`,
-`_` and `.`, and a name from a hand-written file is drawn with its markers.
+(`flakeIdRegexS` in nix, the same from 2.19 to 2.35), though a `flake.lock`
+can hold any string: nix itself locks an input written as
+`inputs."--refresh"`. So nfu holds input names to that rule
+(`flake.IsInputName`), which also catches a name written wholly in another
+script, and refuses to hand nix a name that fails it: such a name can only be
+an input nix would refuse, or an option. A deploy host is an attribute of the
+flake's `deploy.nodes` and may be any string, so nothing is required of it;
+nfu notes a word that mixes scripts and, short of that, any name that is not
+plain ASCII, because the mixed-script check cannot see a name written wholly
+in look-alike letters. The host note changes nothing nfu does with the name.
+Project names are not noted: `nfu project add` and the form accept only ASCII
+letters, digits, `-`, `_` and `.`, and a name from a hand-written file is
+drawn with its markers.
 
+## Arguments of other programs
+
+The same outside text goes into command lines. nfu never runs a shell, so a
+value is always one argument; what is left to rule out is a value being read
+as an option, or as something other than the one thing it names. Each row
+says what holds that, and it is never the display cleaning.
+
+| Command | Outside values | Can one be read as an option? |
+| --- | --- | --- |
+| `nix flake update -- <name>…` | Input names: from the command line, the picker's selection, a project file | Without the guards, yes: `nix flake update --refresh` is an option, and updates every input. Two guards, each enough alone. `flake.CheckInputNames` refuses any name that is not an input name by nix's rule, before nix is run, in `validateNames`, `Upstream`, `project.BuildPlan` and the dry run; the picker and the form do not offer such a name. And the names stand after `--`, which ends nix's options (read in the argument parser of nix 2.19.0, the first version that takes names here; run against 2.34.9 and 2.35.6), so the first guard is not what the second depends on. |
+| `nix flake update --output-lock-file <file> -- <name>` | The input name; the file is nfu's own temporary path | The same two guards. The file comes before `--` because nothing after it is an option. |
+| `nix flake metadata --json --no-write-lock-file` | None | No. |
+| `nh os switch <root>` | The flake path, from the configuration, `--flake` or the environment | No. `config.Resolve` makes it absolute, so it starts with `/`. |
+| `deploy <deployArgs…> .#<host>` | The host name; the host's `deployArgs` | The host, no: it is always the last argument and always starts with `.#`. The `deployArgs` are options on purpose. They are whatever the host catalog or a project file says, including options that make deploy run other commands, such as `--ssh-opts`. A project file is as trusted as a script; the plan shows every argument before a run is confirmed. |
+| `git -C <dir> status --porcelain -- <paths>`, `add -- <paths>`, `commit -m <subject> -- <paths>` | The directory; the commit subject, built from input names and pins; paths of `flake.lock` and of project files | No: the directory is the value of `-C`, the subject the value of `-m`, and paths stand after `--`. A path could be read as a pattern, though: `*.toml` matches every such file, and `:(top)x` is pathspec magic even after `--`. Every git command runs with `GIT_LITERAL_PATHSPECS=1`, so a path is the name of one file. |
+| `$EDITOR <path>` | The project's file name; `$EDITOR` itself is the user's own | No. `projectFilePath` makes the path absolute. Editors do not agree on `--`. |
+| `sudo -v` | None | No. |
+
+## Where the raw value goes, on purpose
 ## Where the raw value goes, on purpose
 
 | Sink | Gets | Why |
 | --- | --- | --- |
-| `nix flake update <name>…` | The input names as given, after they were found in the lock | A name has to match the lock. A name with a hidden character in it matches nothing, unless the lock has that very name. |
+| `nix flake update -- <name>…` | The input names as given, after they passed nix's rule for a name and were found in the lock | A name has to match the lock. A name with a hidden character in it fails the rule and is refused. |
 | `deploy <args> .#<host>`, `nh os switch <root>` | Host names, deploy arguments and the flake path as stored | They have to name the same node and directory. |
 | `git commit -m <subject> -- <paths>` | The commit subject built from raw names and pins (`lock.Message`, `ui.ShortPin`); raw paths | The history should say what was in the lock. The subject is cleaned when it is shown. |
 | Project files, `projects.toml`, `runs.toml`, the `current` marker | Raw names, inputs, hosts, arguments, the run summary | They are data. `nfu project add --inputs` and `--hosts` write what they were given, after the warning. |
@@ -174,7 +198,7 @@ noted: `nfu project add` and the form accept only ASCII letters, digits, `-`,
 
 - The termsafe module's own tests, which run in its repository.
 - `internal/tui/hostile_test.go`: the module's 24 hostile samples through
-  each of the 31 ways outside text enters the three TUIs, checked in the
+  each of the 33 ways outside text enters the three TUIs, checked in the
   view's string (`termsafe.ViewProblem`) and in the bytes a real bubbletea
   program writes (`termsafe.TerminalProblem`).
 - `hostile_test.go`: the same samples through every way outside text reaches
@@ -183,3 +207,14 @@ noted: `nfu project add` and the form accept only ASCII letters, digits, `-`,
   rules, with exact wording.
 - `internal/proc/lines_test.go`: what a line of nh or deploy output becomes,
   and the samples printed by a real child process.
+- `internal/flake/names_test.go`: nix's rule for an input name; a lock that
+  nix wrote for inputs named `--refresh`, `-n` and `we ird`
+  (`testdata/flag-named`); and, against a stand-in for nix, that asking for
+  such an input runs no `nix flake update` at all while an ordinary name goes
+  after `--`.
+- `internal/git/git_test.go`, with real git: a file called `*.toml` or
+  `:(top)a.toml` is committed alone, and a subject that looks like an option
+  is a subject.
+- `internal/tui/argv_test.go`, `internal/project`, `internal/config`: the
+  picker, the form and a plan refuse such an input; the editor's path and the
+  flake root are absolute; a deploy host is always `.#<host>`.

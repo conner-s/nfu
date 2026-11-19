@@ -81,6 +81,8 @@ func (m model) pickView() string {
 		switch {
 		case r.Follows:
 			box = s.Dim.Render(ui.GlyphFollows + " ")
+		case !selectable(m.inputs[i]):
+			box = s.Warn.Render("[!]") // cannot be picked; the row's note says why
 		case m.selected[i]:
 			box = s.Good.Render("[x]")
 		default:

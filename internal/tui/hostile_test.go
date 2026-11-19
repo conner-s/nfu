@@ -64,12 +64,17 @@ var entries = []struct {
 		m := loaded(t, flake.Input{Name: "nixpkgs", Rev: "old"})
 		return step(m, upstreamMsg{name: "nixpkgs", err: nixError(text)})
 	}},
-	{name: "picker: names being updated", build: func(t *testing.T, text string) tea.Model {
-		m := loaded(t, flake.Input{Name: text, Rev: "old"})
-		m.selected[0] = true
-		// enter starts the update; the command it returns would run nix.
-		next, _ := m.Update(key("enter"))
-		return next.(model)
+	// No sample is a name nix can be asked for, so space does not select
+	// the row and enter has nothing to update: outside text cannot become the
+	// "updating …" line. What is drawn is the list, with the row's note.
+	{name: "picker: an input nix cannot be asked for by name", build: func(t *testing.T, text string) tea.Model {
+		m := loaded(t, flake.Input{Name: text, Rev: "old"}, flake.Input{Name: "nixpkgs", Rev: "old"})
+		m.cursor = 0
+		m = step(m, key(" "))
+		if len(m.selectedNames()) != 0 {
+			t.Fatalf("an input named %q was selected", text)
+		}
+		return step(m, key("enter"))
 	}},
 	{name: "picker: update results", build: func(t *testing.T, text string) tea.Model {
 		m := loaded(t, flake.Input{Name: text, Rev: "old"})
@@ -94,9 +99,17 @@ var entries = []struct {
 	{name: "manager: project files, list", build: func(t *testing.T, text string) tea.Model {
 		return managing(t, hostileConfig(text), mList)
 	}},
-	{name: "manager: project files, detail", narrow: true, build: func(t *testing.T, text string) tea.Model {
+	// The project's inputs are named text, which is no name nix can update,
+	// so the detail view shows the refusal where the steps would be. It
+	// quotes the name with %q.
+	{name: "manager: project files, detail", quoted: true, narrow: true, build: func(t *testing.T, text string) tea.Model {
 		m := managing(t, hostileConfig(text), mDetail)
 		m.w = 60 // the TOML pane has its own entry
+		return m
+	}},
+	{name: "manager: steps of a project, detail", narrow: true, build: func(t *testing.T, text string) tea.Model {
+		m := managing(t, hostileHosts(text), mDetail)
+		m.w = 60
 		return m
 	}},
 	{name: "manager: project files, TOML pane", quoted: true, build: func(t *testing.T, text string) tea.Model {
@@ -128,8 +141,19 @@ var entries = []struct {
 		return stepManager(t, m, tea.KeyPressMsg{Code: 'x', Text: text})
 	}},
 	{name: "manager: plan of a dry run", build: func(t *testing.T, text string) tea.Model {
+		m := managing(t, hostileHosts(text), mList)
+		next, _ := m.startRun(true)
+		if m, ok := next.(managerModel); !ok || m.run == nil {
+			t.Fatalf("the dry run did not start")
+		}
+		return next
+	}},
+	{name: "manager: a run refused for its input names", quoted: true, build: func(t *testing.T, text string) tea.Model {
 		m := managing(t, hostileConfig(text), mList)
 		next, _ := m.startRun(true)
+		if m, ok := next.(managerModel); !ok || m.run != nil {
+			t.Fatalf("a project whose input is named %q got a plan", text)
+		}
 		return next
 	}},
 	{name: "manager: nh and deploy output", build: func(t *testing.T, text string) tea.Model {
@@ -249,6 +273,22 @@ func hostileConfig(text string) *config.Config {
 				HostDefs:    map[string]config.Host{"inline" + text: {Hostname: text}},
 			},
 			"bundle" + text: {Includes: []string{"lab" + text}},
+		},
+	}
+}
+
+// hostileHosts is a project nix can run (its input has an ordinary name)
+// whose hosts, deploy arguments, description and flake path hold text.
+func hostileHosts(text string) *config.Config {
+	return &config.Config{
+		Hosts: map[string]config.Host{"host" + text: {DeployArgs: []string{"--flag", text}}},
+		Projects: map[string]config.Project{
+			"lab": {
+				Inputs:      []string{"nixpkgs"},
+				Hosts:       []string{"host" + text, text},
+				Description: "about " + text,
+				FlakeRoot:   "/home/user/" + text,
+			},
 		},
 	}
 }

@@ -99,8 +99,8 @@ type PlanText struct {
 	Commit      bool
 	LocalSwitch bool
 	Deploys     []termsafe.Text // the arguments of each deploy, in the plan's order
-	// Notes name the inputs and hosts of the plan that are not what they look
-	// like (ui.InputNameNote, ui.HostNameNote).
+	// Notes name the hosts of the plan that are not what they look like
+	// (ui.HostNameNote).
 	Notes []termsafe.Text
 }
 
@@ -123,16 +123,12 @@ func (p Plan) Text(root string) PlanText {
 	return t
 }
 
-// Notes lists the inputs and hosts of the plan whose names deserve a second
-// look before the plan is run, each with the reason. It is empty for a plan of
-// ordinary names.
+// Notes lists the hosts of the plan whose names deserve a second look before
+// the plan is run, each with the reason. It is empty for a plan of ordinary
+// names. Inputs need no note here: a plan with an input nix cannot be asked
+// for by name is never built (BuildPlan).
 func (p Plan) Notes() []termsafe.Text {
 	var notes []termsafe.Text
-	for _, in := range p.Inputs {
-		if n := ui.InputNameNote(in); !n.IsEmpty() {
-			notes = append(notes, ui.Linef("input %s: %s", in, n))
-		}
-	}
 	for _, h := range p.Hosts {
 		if n := ui.HostNameNote(h.Name); !n.IsEmpty() {
 			notes = append(notes, ui.Linef("host %s: %s", h.Name, n))

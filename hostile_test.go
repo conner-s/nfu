@@ -171,18 +171,19 @@ func TestWarnArgs(t *testing.T) {
 	}
 }
 
-// The plan a person confirms names the inputs and hosts that are not what
-// they look like.
+// The plan a person confirms names the hosts that are not what they look
+// like. (An input that is not what it looks like never gets a plan: see
+// TestBuildPlanRefusesInputNamesNixCannotUpdate in internal/project.)
 func TestRenderPlanNotesOddNames(t *testing.T) {
 	cyrA := string(rune(0x0430)) // Cyrillic a
 	plain := project.Plan{Name: "lab", Inputs: []string{"nixpkgs"}, Hosts: []project.HostStep{{Name: "Fabricator"}}}
 	if out := project.RenderPlan(ui.NewStyles(), plain.Text("/flake")); strings.Contains(out, "!") {
 		t.Errorf("a plan of ordinary names carries a note:\n%s", out)
 	}
-	odd := project.Plan{Name: "lab", Inputs: []string{"nixp" + cyrA + "kgs"}, Hosts: []project.HostStep{{Name: "F" + cyrA + "bricator"}}}
+	odd := project.Plan{Name: "lab", Inputs: []string{"nixpkgs"}, Hosts: []project.HostStep{{Name: "F" + cyrA + "bricator"}}}
 	out := project.RenderPlan(ui.NewStyles(), odd.Text("/flake"))
 	for _, want := range []string{
-		"! input nixp" + cyrA + "kgs: ", "! host F" + cyrA + "bricator: ", "mixes Cyrillic and Latin letters (U+0430 is Cyrillic)",
+		"! host F" + cyrA + "bricator: ", "mixes Cyrillic and Latin letters (U+0430 is Cyrillic)",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("the plan does not say %q:\n%s", want, out)

@@ -102,9 +102,18 @@ func (c *Client) UpdateSeq(ctx context.Context, rep UpdateReporter, names ...str
 	if err != nil {
 		return nil, err
 	}
+	// "Every input" is every input nix can be asked for by name. One whose
+	// name is not an input name by nix's rule is left as it was, and the run
+	// ends by saying so (a name given explicitly is refused before anything
+	// runs, by validateNames).
+	var left []string
 	if len(names) == 0 {
 		for _, in := range before {
-			if !in.Follows {
+			switch {
+			case in.Follows:
+			case !IsInputName(in.Name):
+				left = append(left, in.Name)
+			default:
 				names = append(names, in.Name) // Inputs is already name-sorted
 			}
 		}
@@ -131,6 +140,9 @@ func (c *Client) UpdateSeq(ctx context.Context, rep UpdateReporter, names ...str
 		rep.Done(r)
 		cur = after // this input's after is the next input's before
 	}
+	if len(left) > 0 {
+		return results, fmt.Errorf("not updated: %w", &InvalidInputError{Names: left})
+	}
 	return results, nil
 }
 
@@ -155,10 +167,17 @@ func (c *Client) lockInputs() (map[string]Input, error) {
 	return indexByName(inputs), nil
 }
 
-// validateNames rejects unknown inputs and `follows` aliases before any nix
-// invocation, so a typo yields a friendly list instead of a cryptic nix error
-// and never a partial write.
+// validateNames rejects names that are not input names by nix's rule, unknown
+// inputs and `follows` aliases before any nix invocation, so a typo yields a
+// friendly list instead of a cryptic nix error and never a partial write.
+//
+// The rule comes first and does not depend on the lock: a lock can hold an
+// input named like an option, and being in the lock must not be what lets a
+// name through to nix's command line.
 func validateNames(names []string, byName map[string]Input, all []Input) error {
+	if err := CheckInputNames(names...); err != nil {
+		return err
+	}
 	var unknown, follows []string
 	for _, n := range names {
 		in, ok := byName[n]
@@ -200,11 +219,20 @@ func buildResults(names []string, before, after map[string]Input, blocks map[str
 }
 
 // updateArgs builds the argv for the ONE nix invocation nfu uses to write
-// flake.lock. Modern positional form (Nix ≥ 2.19): `nix flake update <input…>`;
+// flake.lock. Modern positional form (Nix ≥ 2.19): `nix flake update -- <input…>`;
 // with no names it updates every input.
+//
+// The names stand after `--`, which ends nix's options: whatever a name looks
+// like, nix reads it as a name. Callers have already refused every name that
+// is not one by nix's rule (validateNames), so this is the second of two
+// independent guards, and the one that still holds if that rule is ever
+// loosened.
 func (c *Client) updateArgs(names []string) []string {
 	args := nixArgs("flake", "update")
-	return append(args, names...)
+	if len(names) == 0 {
+		return args
+	}
+	return append(append(args, "--"), names...)
 }
 
 func indexByName(inputs []Input) map[string]Input {

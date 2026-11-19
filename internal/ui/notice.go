@@ -5,6 +5,8 @@ import (
 	"strings"
 
 	"forgejo.kube.internal.conn3r.xyz/connerlab/termsafe"
+
+	"github.com/conner-s/nfu/internal/flake"
 )
 
 // This file words what nfu tells the user when cleaning changed something, or
@@ -68,14 +70,14 @@ func Typed(what, raw string) (cleaned string, warning termsafe.Text) {
 // InputNameNote says why a flake input's name deserves a second look, and is
 // empty for an ordinary name.
 //
-// The rule for an input name is nix's own: `nix flake update <name>` takes
-// only names of ASCII letters, digits, "_" and "-" that start with a letter.
-// A flake.lock can hold any string as a name, so a name outside that rule is
-// either one nix will refuse to update or one made to look like another, and
-// both are worth a note. This is stricter than looking for mixed scripts and
+// The rule for an input name is nix's own (flake.IsInputName): `nix flake
+// update <name>` takes only names of ASCII letters, digits, "_" and "-" that
+// start with a letter. A flake.lock can hold any string as a name, so a name
+// outside that rule is one nfu will not hand to nix, and may be one made to
+// look like another; both are worth a note. This is stricter than looking for mixed scripts and
 // catches what that misses, such as a name written wholly in Cyrillic.
 func InputNameNote(name string) termsafe.Text {
-	if isFlakeID(name) {
+	if flake.IsInputName(name) {
 		return termsafe.Text{}
 	}
 	return noteOf(append(oddities(name), "nix updates only names of ASCII letters, digits, _ and -"))
@@ -117,22 +119,6 @@ func noteOf(parts []string) termsafe.Text {
 		return termsafe.Text{}
 	}
 	return Words(strings.Join(parts, "; "))
-}
-
-// isFlakeID reports whether s matches [a-zA-Z][a-zA-Z0-9_-]*, the form nix
-// requires of an input name on its command line (flakeIdRegexS in nix's
-// libflake).
-func isFlakeID(s string) bool {
-	for i := 0; i < len(s); i++ {
-		c := s[i]
-		switch {
-		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z':
-		case i > 0 && (c >= '0' && c <= '9' || c == '_' || c == '-'):
-		default:
-			return false
-		}
-	}
-	return s != ""
 }
 
 func isASCII(s string) bool {

@@ -271,7 +271,7 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "G", "end":
 		m.cursor = len(m.inputs) - 1
 	case "space", "x":
-		if m.cursor < len(m.inputs) && !m.inputs[m.cursor].Follows {
+		if m.cursor < len(m.inputs) && selectable(m.inputs[m.cursor]) {
 			m.selected[m.cursor] = !m.selected[m.cursor]
 		}
 	case "a":
@@ -326,8 +326,9 @@ func (m model) startFetch(all, refresh bool) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		in := m.inputs[m.cursor]
-		if in.Follows {
-			// A `follows` alias has no independent lock entry to probe.
+		if !selectable(in) {
+			// A `follows` alias has no independent lock entry to probe, and an
+			// input nix cannot be asked for by name cannot be probed by name.
 			return m, nil
 		}
 		targets = []string{in.Name}
@@ -354,7 +355,7 @@ func (m *model) toggleAll() {
 	// If every selectable input is already selected, clear; otherwise select all.
 	allOn := true
 	for i, in := range m.inputs {
-		if in.Follows {
+		if !selectable(in) {
 			continue
 		}
 		if !m.selected[i] {
@@ -363,7 +364,7 @@ func (m *model) toggleAll() {
 		}
 	}
 	for i, in := range m.inputs {
-		if in.Follows {
+		if !selectable(in) {
 			continue
 		}
 		m.selected[i] = !allOn
@@ -373,7 +374,7 @@ func (m *model) toggleAll() {
 func (m model) selectedNames() []string {
 	var names []string
 	for i, in := range m.inputs {
-		if in.Follows {
+		if !selectable(in) {
 			continue
 		}
 		if m.selected[i] {
@@ -391,16 +392,26 @@ func (m model) probeOrder() []string {
 	names := make([]string, 0, len(m.inputs))
 	for off := range m.inputs {
 		in := m.inputs[(m.cursor+off)%len(m.inputs)]
-		if !in.Follows {
+		if selectable(in) {
 			names = append(names, in.Name)
 		}
 	}
 	return names
 }
 
+// selectable reports whether an input can be picked for an update or a probe.
+// A `follows` alias has no lock entry of its own. An input whose name is not
+// an input name by nix's rule cannot be named on nix's command line: named
+// `--refresh`, it would be read as an option. The picker never offers it, and
+// its row says why (ui.InputNameNote); internal/flake refuses such a name by
+// itself as well.
+func selectable(in flake.Input) bool {
+	return !in.Follows && flake.IsInputName(in.Name)
+}
+
 func firstSelectable(inputs []flake.Input) int {
 	for i, in := range inputs {
-		if !in.Follows {
+		if selectable(in) {
 			return i
 		}
 	}
@@ -409,7 +420,7 @@ func firstSelectable(inputs []flake.Input) int {
 
 func anySelectable(inputs []flake.Input) bool {
 	for _, in := range inputs {
-		if !in.Follows {
+		if selectable(in) {
 			return true
 		}
 	}

@@ -14,7 +14,7 @@ import (
 // form it calls render directly, so the alt-screen decision stays with the
 // manager.
 func (m formModel) View() tea.View {
-	return tea.NewView(m.render())
+	return tea.NewView(ui.Own(m.render()))
 }
 
 func (m formModel) render() string {
@@ -27,6 +27,9 @@ func (m formModel) render() string {
 	title := "new project"
 	if m.editing {
 		title = "edit project"
+	}
+	if !m.embedded {
+		b.WriteString(banner(s, 0))
 	}
 	fmt.Fprintf(&b, "%s\n\n", s.Title.Render(title))
 

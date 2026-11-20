@@ -22,19 +22,25 @@ import (
 // (termsafe.Mark). The output of nh and deploy is a log that is watched going
 // by, so there they are removed (termsafe.Drop, in proc.RunLines).
 //
+// Each function ends in Fit (terminal.go): on a terminal that is not known to
+// decode UTF-8 the text comes out in its ASCII form, every other character
+// shown by its code point. That is done here, before a view pads or clips, so
+// that one character is one column there. nfu's own words in a Words or Linef
+// get their ASCII stand-ins instead (Own).
+//
 // A Text is for the screen only. What nfu compares, hands to nix, git or
 // deploy, or writes to a file stays the raw string.
 
 // Name cleans a name a person acts on: a flake input, a deploy host, a
 // project.
 func Name(raw string) termsafe.Text {
-	return termsafe.Mark.Line(raw)
+	return Fit(termsafe.Mark.Line(raw))
 }
 
 // Line cleans any other text that is drawn on one line: a path, a pin, a ref,
 // a description, a commit subject, a warning that quotes git.
 func Line(raw string) termsafe.Text {
-	return termsafe.Mark.Line(raw)
+	return Fit(termsafe.Mark.Line(raw))
 }
 
 // Names cleans a list and joins it. Each element is cleaned by itself first:
@@ -43,49 +49,52 @@ func Line(raw string) termsafe.Text {
 func Names(raw []string, sep string) termsafe.Text {
 	parts := make([]string, len(raw))
 	for i, r := range raw {
-		parts[i] = termsafe.Mark.Line(r).String()
+		parts[i] = Fit(termsafe.Mark.Line(r)).String()
 	}
-	return termsafe.Mark.Line(strings.Join(parts, sep))
+	return termsafe.Mark.Line(Own(strings.Join(parts, sep)))
 }
 
 // Words is for text nfu wrote itself, where a Text is wanted. It cleans all
 // the same, so handing it outside text by mistake is not a hole.
 func Words(own string) termsafe.Text {
-	return termsafe.Mark.Line(own)
+	return termsafe.Mark.Line(Own(own))
 }
 
 // Linef formats one line from nfu's own words and outside values. Every
-// string and error among args is cleaned by itself before it is put in, for
-// the reason given at Names; the result is cleaned again as a whole.
+// string and error among args is cleaned and fitted by itself before it is
+// put in, for the reason given at Names; the format's own glyphs get their
+// stand-ins, and the result is cleaned again as a whole.
 func Linef(format string, args ...any) termsafe.Text {
 	cleaned := make([]any, len(args))
 	for i, a := range args {
 		switch v := a.(type) {
 		case string:
-			cleaned[i] = termsafe.Mark.Line(v).String()
+			cleaned[i] = Fit(termsafe.Mark.Line(v)).String()
 		case error:
-			cleaned[i] = termsafe.Mark.Line(v.Error()).String()
+			cleaned[i] = Fit(termsafe.Mark.Line(v.Error())).String()
 		case termsafe.Text:
 			cleaned[i] = v.String()
 		default:
 			cleaned[i] = a
 		}
 	}
-	return termsafe.Mark.Line(fmt.Sprintf(format, cleaned...))
+	return termsafe.Mark.Line(Own(fmt.Sprintf(format, cleaned...)))
 }
 
-// Pin cleans a locked pin and abbreviates it as ShortPin does. Cleaning comes
-// first, so that the abbreviation is taken from what is left to read and not
-// from the head of a control string. Cutting cleaned text between two
+// Pin cleans a locked pin and abbreviates it as ShortPin does. Cleaning and
+// fitting come first, so that the abbreviation is taken from what is left to
+// read and not from the head of a control string. The "—" of an empty pin is
+// nfu's own. Cutting cleaned text between two
 // characters leaves it clean; it is wrapped again to be a Text.
 func Pin(raw string) termsafe.Text {
-	return termsafe.Mark.Line(ShortPin(termsafe.Mark.Line(raw).String()))
+	return termsafe.Mark.Line(Own(ShortPin(Fit(termsafe.Mark.Line(raw)).String())))
 }
 
 // Err cleans an error for printing in full. It keeps its lines: an error
 // from nix carries nix's whole stderr. The report says what was taken out.
 func Err(err error) (termsafe.Text, termsafe.Report) {
-	return termsafe.Mark.CleanReport(err.Error())
+	text, rep := termsafe.Mark.CleanReport(err.Error())
+	return Fit(text), rep
 }
 
 // ErrLines is Err with the text split into its lines, for a pane that draws
@@ -113,7 +122,7 @@ func ErrLine(err error) termsafe.Text {
 	if i := strings.IndexAny(s, "\r\n"); i >= 0 {
 		s = s[:i]
 	}
-	return termsafe.Mark.Line(s).TrimSpace().Truncate(errLineMax)
+	return Fit(termsafe.Mark.Line(s).TrimSpace()).Truncate(errLineMax)
 }
 
 // InputRow is a flake input as it is drawn, in `nfu list`, in the picker and

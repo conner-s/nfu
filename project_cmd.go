@@ -116,18 +116,18 @@ func runProjectRun(ctx context.Context, g globalFlags, names []string) error {
 	}
 
 	for _, p := range plans {
-		fmt.Print(project.RenderPlan(s, p.Text(client.Root())))
+		ui.Fprint(os.Stdout, project.RenderPlan(s, p.Text(client.Root())))
 	}
 
 	if g.dryRun {
-		fmt.Printf("\n%s\n", s.Dim.Render("dry-run: nothing was written"))
+		ui.Fprintf(os.Stdout, "\n%s\n", s.Dim.Render("dry-run: nothing was written"))
 		return nil
 	}
 
 	if g.noCommit {
 		for _, p := range plans {
 			if len(p.Hosts) > 0 {
-				fmt.Fprintln(os.Stderr, s.Warn.Render("! --no-commit with a deploy: an uncommitted flake.lock may not reach the host"))
+				ui.Fprintln(os.Stderr, s.Warn.Render("! --no-commit with a deploy: an uncommitted flake.lock may not reach the host"))
 				break
 			}
 		}
@@ -139,7 +139,7 @@ func runProjectRun(ctx context.Context, g globalFlags, names []string) error {
 			return err
 		}
 		if !ok {
-			fmt.Println(s.Dim.Render("aborted"))
+			ui.Fprintln(os.Stdout, s.Dim.Render("aborted"))
 			return nil
 		}
 	}
@@ -157,7 +157,7 @@ func runProjectRun(ctx context.Context, g globalFlags, names []string) error {
 		if err != nil {
 			return err
 		}
-		fmt.Print("\n" + runSummary(s, p.Name, res))
+		ui.Fprint(os.Stdout, "\n"+runSummary(s, p.Name, res))
 	}
 	return nil
 }
@@ -175,12 +175,12 @@ func runProjectUse(ctx context.Context, g globalFlags, args []string) error {
 			return err
 		}
 		if cur == "" {
-			fmt.Println(s.Dim.Render("no current project set"))
+			ui.Fprintln(os.Stdout, s.Dim.Render("no current project set"))
 			return nil
 		}
 		// The marker file is anyone's to write. A name nfu itself would
 		// accept is plain ASCII and prints as it is.
-		fmt.Println(ui.Name(cur))
+		ui.Fprintln(os.Stdout, ui.Name(cur))
 		return nil
 	}
 	name := args[0]
@@ -188,7 +188,7 @@ func runProjectUse(ctx context.Context, g globalFlags, args []string) error {
 		if err := project.WriteCurrent(configDir, ""); err != nil {
 			return err
 		}
-		fmt.Println(s.Dim.Render("current project cleared"))
+		ui.Fprintln(os.Stdout, s.Dim.Render("current project cleared"))
 		return nil
 	}
 	if _, ok := cat.Project(name); !ok {
@@ -197,7 +197,7 @@ func runProjectUse(ctx context.Context, g globalFlags, args []string) error {
 	if err := project.WriteCurrent(configDir, name); err != nil {
 		return err
 	}
-	fmt.Printf("%s %s\n", s.Good.Render("current project:"), s.Value.Render(ui.Name(name).String()))
+	ui.Fprintf(os.Stdout, "%s %s\n", s.Good.Render("current project:"), s.Value.Render(ui.Name(name).String()))
 	return nil
 }
 
@@ -250,10 +250,10 @@ func runProjectList(ctx context.Context, g globalFlags) error {
 
 	s := ui.StylesFor(cfg.Theme)
 	if len(entries) == 0 {
-		fmt.Println(s.Dim.Render("no projects yet — `nfu project add <name>` to create one"))
+		ui.Fprintln(os.Stdout, s.Dim.Render("no projects yet — `nfu project add <name>` to create one"))
 		return nil
 	}
-	fmt.Print(renderProjectList(s, cat, entries, cur))
+	ui.Fprint(os.Stdout, renderProjectList(s, cat, entries, cur))
 	return nil
 }
 
@@ -381,7 +381,7 @@ func confirmDefault(s ui.Styles, prompt termsafe.Text, def bool) (bool, error) {
 	if def {
 		hint = "[Y/n]"
 	}
-	fmt.Printf("\n%s %s ", s.Warn.Render(prompt.String()), hint)
+	ui.Fprintf(os.Stdout, "\n%s %s ", s.Warn.Render(prompt.String()), hint)
 	line, err := stdin.ReadString('\n')
 	if err != nil && err != io.EOF {
 		return false, err

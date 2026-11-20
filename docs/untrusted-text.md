@@ -36,6 +36,21 @@ path against it, and add the path here.
 4. Everything that is not display keeps the raw value: see the last table.
 5. When cleaning changes something the user typed or passed, or when a name is
    not what it looks like, nfu says so: see "What the user is told".
+6. nfu does not assume the terminal decodes UTF-8. One that does not reads
+   the bytes of ordinary characters as controls, so only ASCII is safe there.
+   `main` takes a verdict before it prints a word: `--charset`, else the
+   config's `charset`, else `termsafe.CheckTerminal`, which reads the locale.
+   Two things follow from it, both in `internal/ui/terminal.go`:
+   - Every conversion ends in `ui.Fit`: on a terminal not known to decode
+     UTF-8, outside text is drawn in its ASCII form, `caf<U+00E9>`. That is
+     before a view pads or clips, so one character is one column there.
+   - Everything nfu writes for a person passes through `ui.Own` last: each
+     view, and each printed line by way of `ui.Fprint`. There nfu's own
+     glyphs, lipgloss's borders and the spinners get ASCII stand-ins one
+     column wide, and anything else outside ASCII is written by its code
+     point. So nothing outside ASCII is written even where a `Fit` was
+     missed.
+   nfu does not ask the terminal itself (`termsafe.Terminal.Probe`).
 
 The domain types (`flake.Input`, `flake.UpdateResult`, `project.Entry`,
 `project.Plan`, `config.Project`) are read, compared, written and handed to
@@ -121,7 +136,7 @@ they are built.
 | `sudo -v` before a run in the manager (`tea.ExecProcess`) | Yes, while it has the terminal. |
 | `$EDITOR` on a project file, `E` in the manager (`tea.ExecProcess`) | Yes: the editor draws the file itself. |
 | nix and git | No. nfu captures both streams of every nix and git command; what they said reaches the screen only through an error or a warning, cleaned. |
-| `--json` | It is data for another program and carries every value as it is. `encoding/json` escapes the C0 controls, ESC among them, so no escape sequence leaves this way. A C1 control, a bidirectional control or an invisible character in a name does. |
+| `--json` | It is data for another program and carries every value as it is, also where the terminal is not known to decode UTF-8. `encoding/json` escapes the C0 controls, ESC among them, so no escape sequence leaves this way. A C1 control, a bidirectional control or an invisible character in a name does. |
 | `nfu project add --print` | It is the contents of a file. The TOML encoder escapes the C0 controls in a string; anything else a value holds is in the output. |
 | A panic | Not by any path found. nfu does not panic itself. bubbletea restores the terminal and prints the panic value and a stack trace to stderr uncleaned; a runtime panic's message holds indices and type names, not data. |
 | bubbletea's and lipgloss's own control sequences, the plain spinner's `\r` and erase-line | Own. |
@@ -135,6 +150,7 @@ the value holds, readable and inert, and it is left that way.
 
 | When | TUI | Plain output |
 | --- | --- | --- |
+| The terminal is not known to decode UTF-8: the locale names another codeset or none, or `charset` is `ascii` | The warning at the top of the picker, the manager (wrapped to its width) and the form, with the reason and how to overrule it | `nfu: WARNING: this terminal is not known to decode UTF-8 (…). nfu draws ASCII only … pass --charset=utf8 or set charset = "utf8" in the config.` on stderr, once per run. Not under `--json`. |
 | An argument or a flag's value holds a control sequence, a control character, a bidirectional control or an invisible character | The same line, printed before the TUI opens | `nfu: WARNING: An argument holds … It is shown as "…" and used as it was given. …` on stderr |
 | Text typed or pasted into a field, a name given to `nfu project add`, or a host's stored arguments opened for editing held any of those. They were removed and the cleaned text is used. | `WARNING: … nfu removed that and uses the cleaned text. …` above the form's footer until the form closes; for the manager's filter, as a toast | not applicable |
 | A flake input's name is not one nix will update: anything but ASCII letters, digits, `_` and `-`, starting with a letter. nfu will not pass it to nix. The note says what cleaning found in it and names any word that mixes scripts, by code point. | `! …` after the row in the picker and the form. The picker shows `[!]` where the checkbox would be and will not select or probe the row; the form will not tick it. A project that names one gets no plan: `✗ … is not a name nix can update …` in the detail view and as a toast on `r` and `d`. | `! …` after the row in `nfu list` and in the row of `nfu project list`. Asked to update one, to preview it or to run a project that names one: `nfu: "…" is not a name nix can update: …`, exit 1, before nix is run. `nfu all` updates the others and ends with `nfu: not updated: …`. |
@@ -203,8 +219,16 @@ says what holds that, and it is never the display cleaning.
   program writes (`termsafe.TerminalProblem`).
 - `hostile_test.go`: the same samples through every way outside text reaches
   the plain output.
-- `internal/ui/text_test.go`: the conversions, the notices and the two name
-  rules, with exact wording.
+- The same matrices a second time for a terminal that is not UTF-8
+  (`…_NotUTF8` in both files), where in addition not one byte outside ASCII
+  may be in a view, reach the terminal or be printed
+  (`termsafe.ASCIIProblem`): that covers nfu's own glyphs too.
+- `terminal_test.go`: every print for a person goes through `ui.Fprint`;
+  every character outside ASCII in nfu's source has a stand-in; `--charset`
+  and the config key.
+- `internal/ui/text_test.go`, `internal/ui/terminal_test.go`: the
+  conversions, the notices, the two name rules and the terminal warning, with
+  exact wording; fitting comes before clipping.
 - `internal/proc/lines_test.go`: what a line of nh or deploy output becomes,
   and the samples printed by a real child process.
 - `internal/flake/names_test.go`: nix's rule for an input name; a lock that

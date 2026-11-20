@@ -121,7 +121,7 @@ func runProjectForm(ctx context.Context, g globalFlags, cfg *config.Config, cat 
 		return err
 	}
 	if !res.Saved {
-		fmt.Println(s.Dim.Render("cancelled"))
+		ui.Fprintln(os.Stdout, s.Dim.Render("cancelled"))
 		return nil
 	}
 	return persistProject(ctx, g, cfg, cat, configDir, res.Name, res.Project, res.HostDefs, false)
@@ -222,7 +222,7 @@ func persistProject(ctx context.Context, g globalFlags, cfg *config.Config, cat 
 	if err := writeProject(cfg, configDir, name, p, hostDefs); err != nil {
 		return err
 	}
-	fmt.Printf("%s %s  %s\n", s.Good.Render("saved project:"), s.Value.Render(ui.Name(name).String()), s.Dim.Render(ui.Line(path).String()))
+	ui.Fprintf(os.Stdout, "%s %s  %s\n", s.Good.Render("saved project:"), s.Value.Render(ui.Name(name).String()), s.Dim.Render(ui.Line(path).String()))
 
 	offerCommit(ctx, g, s, verb, name, path, project.IndexPath(configDir))
 	return nil
@@ -248,10 +248,10 @@ func offerCommit(ctx context.Context, g globalFlags, s ui.Styles, verb, name str
 			}
 		}
 		if err := pend.Commit(ctx); err != nil {
-			fmt.Fprintln(os.Stderr, s.Warn.Render(ui.Linef("! commit failed: %s", err).String()))
+			ui.Fprintln(os.Stderr, s.Warn.Render(ui.Linef("! commit failed: %s", err).String()))
 			continue
 		}
-		fmt.Printf("%s %s\n", s.Good.Render("committed:"), s.Dim.Render(ui.Line(pend.Message).String()))
+		ui.Fprintf(os.Stdout, "%s %s\n", s.Good.Render("committed:"), s.Dim.Render(ui.Line(pend.Message).String()))
 	}
 }
 
@@ -302,7 +302,7 @@ func runProjectRemove(ctx context.Context, g globalFlags, args []string) error {
 		_ = project.WriteCurrent(configDir, "")
 	}
 	s := ui.StylesFor(cfg.Theme)
-	fmt.Printf("%s %s\n", s.Good.Render("removed project:"), ui.Name(name))
+	ui.Fprintf(os.Stdout, "%s %s\n", s.Good.Render("removed project:"), ui.Name(name))
 	offerCommit(ctx, g, s, "remove", name,
 		project.FilePath(cfg.ProjectsPath(), name), project.IndexPath(configDir))
 	return nil

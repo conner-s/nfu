@@ -81,9 +81,12 @@ type formModel struct {
 	section section
 
 	name    textinput.Model
-	editing bool           // editing an existing project (name locked)
-	fixed   string         // that project's name, as its file has it
-	base    config.Project // what the file said, for the fields this form does not show
+	editing bool   // editing an existing project (name locked)
+	fixed   string // that project's name, as its file has it
+	// embedded is set when the manager draws the form inside its own view,
+	// which already carries the terminal warning.
+	embedded bool
+	base     config.Project // what the file said, for the fields this form does not show
 
 	inputs   []flake.Input
 	inCursor int

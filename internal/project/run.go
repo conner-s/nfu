@@ -42,21 +42,21 @@ func Run(ctx context.Context, client *flake.Client, plan Plan, s ui.Styles) (Res
 	shown := plan.Text(root)
 
 	// 1. Update the inputs (a single lock write), then commit flake.lock.
-	fmt.Print(stepHeader(s, "update", shown.Inputs))
+	ui.Fprint(os.Stdout, stepHeader(s, "update", shown.Inputs))
 	results, updErr := client.Update(ctx, plan.Inputs...)
 	res.Updates = results
 	if results == nil && updErr != nil {
 		return res, updErr // nothing ran (e.g. unknown input)
 	}
-	fmt.Print(ui.RenderResults(s, ui.ResultRows(results), time.Now().Unix()))
+	ui.Fprint(os.Stdout, ui.RenderResults(s, ui.ResultRows(results), time.Now().Unix()))
 
 	committed, msg, warn := lock.Commit(ctx, root, results, plan.Commit)
 	res.Committed, res.CommitMsg, res.Warn = committed, msg, warn
 	if committed {
-		fmt.Printf("%s %s\n", s.Good.Render("committed flake.lock:"), s.Dim.Render(ui.Line(msg).String()))
+		ui.Fprintf(os.Stdout, "%s %s\n", s.Good.Render("committed flake.lock:"), s.Dim.Render(ui.Line(msg).String()))
 	}
 	if warn != "" {
-		fmt.Fprintln(os.Stderr, s.Warn.Render("! "+ui.Line(warn).String()))
+		ui.Fprintln(os.Stderr, s.Warn.Render("! "+ui.Line(warn).String()))
 	}
 	if updErr != nil {
 		return res, updErr // some inputs moved before a later one failed
@@ -64,7 +64,7 @@ func Run(ctx context.Context, client *flake.Client, plan Plan, s ui.Styles) (Res
 
 	// 2. Rebuild the local host.
 	if plan.LocalSwitch {
-		fmt.Print(stepHeader(s, "nh os switch", shown.Root))
+		ui.Fprint(os.Stdout, stepHeader(s, "nh os switch", shown.Root))
 		if err := proc.Stream(ctx, root, "nh", "os", "switch", root); err != nil {
 			return res, err
 		}
@@ -73,7 +73,7 @@ func Run(ctx context.Context, client *flake.Client, plan Plan, s ui.Styles) (Res
 
 	// 3. Deploy each remote host in order.
 	for i, h := range plan.Hosts {
-		fmt.Print(stepHeader(s, "deploy", shown.Deploys[i]))
+		ui.Fprint(os.Stdout, stepHeader(s, "deploy", shown.Deploys[i]))
 		if err := proc.Stream(ctx, root, "deploy", h.Argv()...); err != nil {
 			return res, err
 		}

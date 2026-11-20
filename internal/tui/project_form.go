@@ -13,6 +13,7 @@ import (
 
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
+	"github.com/conner-s/termsafe"
 
 	"github.com/conner-s/nfu/internal/config"
 	"github.com/conner-s/nfu/internal/flake"
@@ -81,6 +82,7 @@ type formModel struct {
 
 	name    textinput.Model
 	editing bool           // editing an existing project (name locked)
+	fixed   string         // that project's name, as its file has it
 	base    config.Project // what the file said, for the fields this form does not show
 
 	inputs   []flake.Input
@@ -99,7 +101,10 @@ type formModel struct {
 	hName    textinput.Model
 	hArgs    textinput.Model
 
-	err    string
+	err string
+	// notice is the warning that text put into one of the fields was cleaned
+	// on the way in (ui.Typed). It stays up until the form closes.
+	notice termsafe.Text
 	result FormResult
 	quit   bool
 }
@@ -132,7 +137,15 @@ func newFormModel(inputs []flake.Input, known []HostOption, start FormStart, s u
 	// bubbles v2 renders only the first placeholder rune when no width is set
 	// (upstream bubbles#950, still open in v2.2.1); v1 showed the whole string.
 	name.SetWidth(40)
-	name.SetValue(start.Name)
+	// A name given on the command line goes into the field, where it is
+	// edited and then used: it is cleaned like anything typed there. The name
+	// of a project being edited is not put in the field at all (see fixed).
+	var notice termsafe.Text
+	if !start.Editing {
+		var cleaned string
+		cleaned, notice = ui.Typed("The project name given", start.Name)
+		name.SetValue(cleaned)
+	}
 	name.Focus()
 
 	sel := map[string]bool{}
@@ -198,6 +211,8 @@ func newFormModel(inputs []flake.Input, known []HostOption, start FormStart, s u
 		section:     secName,
 		name:        name,
 		editing:     start.Editing,
+		fixed:       start.Name,
+		notice:      notice,
 		base:        start.Base,
 		inputs:      inputs,
 		inSel:       sel,
@@ -255,7 +270,7 @@ func (m formModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.editing {
 			return m, nil // name is locked when editing
 		}
-		m.name, cmd = m.name.Update(key)
+		m.name, cmd = m.name.Update(m.typed(key))
 		return m, cmd
 	case secInputs:
 		return m.updateInputs(key)
@@ -281,6 +296,13 @@ func (m formModel) updateInputs(key tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		sel := m.selectableInputs()
 		if m.inCursor < len(sel) {
 			n := sel[m.inCursor].Name
+			// A stored input with such a name can be unticked, never ticked:
+			// a run of the project would be refused (project.BuildPlan).
+			if !m.inSel[n] && !flake.IsInputName(n) {
+				m.err = "nix cannot update an input with that name: letters, digits, _ and - only"
+				return m, nil
+			}
+			m.err = ""
 			m.inSel[n] = !m.inSel[n]
 		}
 	}
@@ -309,8 +331,14 @@ func (m formModel) updateHosts(key tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		if m.hCursor < len(m.hosts) {
 			m.hostEdit = true
 			m.editIdx = m.hCursor
-			m.hName.SetValue(m.hosts[m.hCursor].name)
-			m.hArgs.SetValue(joinArgs(m.hosts[m.hCursor].args))
+			// The name is only shown here: confirming an edit keeps the
+			// entry's own name. The arguments are edited and then saved, so
+			// they are cleaned like typed text, and the notice says so when
+			// what was stored is not what the field now holds.
+			m.hName.SetValue(ui.Name(m.hosts[m.hCursor].name).String())
+			args, warning := ui.Typed("The stored arguments of this host", joinArgs(m.hosts[m.hCursor].args))
+			m.hArgs.SetValue(args)
+			m.warn(warning)
 			m.hName.Blur() // name fixed when editing an entry
 			m.hArgs.Focus()
 			return m, textinput.Blink
@@ -330,6 +358,9 @@ func (m formModel) updateHosts(key tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 // or it is silently dropped.
 func (m formModel) updatePaste(msg tea.PasteMsg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
+	cleaned, warning := ui.Typed("The pasted text", msg.Content)
+	msg.Content = cleaned
+	m.warn(warning)
 	switch {
 	case m.hostEdit && m.hName.Focused():
 		m.hName, cmd = m.hName.Update(msg)
@@ -359,12 +390,34 @@ func (m formModel) updateHostEdit(key tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m.commitHostEdit()
 	}
 	var cmd tea.Cmd
+	key = m.typed(key)
 	if m.hName.Focused() {
 		m.hName, cmd = m.hName.Update(key)
 	} else {
 		m.hArgs, cmd = m.hArgs.Update(key)
 	}
 	return m, cmd
+}
+
+// typed cleans the text of a key press on its way into a text field. A field
+// draws what it holds and nfu then uses it, so nothing goes in uncleaned; a
+// terminal can deliver a bidirectional control or an invisible character as
+// typed text.
+func (m *formModel) typed(key tea.KeyPressMsg) tea.KeyPressMsg {
+	if key.Text == "" {
+		return key
+	}
+	cleaned, warning := ui.Typed("The typed text", key.Text)
+	key.Text = cleaned
+	m.warn(warning)
+	return key
+}
+
+// warn raises the notice. An empty warning leaves the one that is up.
+func (m *formModel) warn(w termsafe.Text) {
+	if !w.IsEmpty() {
+		m.notice = w
+	}
 }
 
 func (m formModel) commitHostEdit() (tea.Model, tea.Cmd) {
@@ -397,6 +450,9 @@ func (m formModel) commitHostEdit() (tea.Model, tea.Cmd) {
 // save validates and finalizes the definition, quitting on success.
 func (m formModel) save() (tea.Model, tea.Cmd) {
 	name := trimSpace(m.name.Value())
+	if m.editing {
+		name = m.fixed // the file's own name, never what a field made of it
+	}
 	if err := validateFormName(name); err != "" {
 		m.err = err
 		return m, nil

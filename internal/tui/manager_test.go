@@ -38,13 +38,13 @@ func TestStepsForPlan(t *testing.T) {
 	if strings.Join(verbs, " ") != strings.Join(want, " ") {
 		t.Fatalf("verbs = %v, want %v", verbs, want)
 	}
-	if !strings.Contains(steps[0].cmd, "nix flake update nixpkgs nfu") || !strings.Contains(steps[0].cmd, "commit flake.lock") {
-		t.Fatalf("update cmd = %q", steps[0].cmd)
+	if cmd := steps[0].cmd.String(); !strings.Contains(cmd, "nix flake update nixpkgs nfu") || !strings.Contains(cmd, "commit flake.lock") {
+		t.Fatalf("update cmd = %q", cmd)
 	}
-	if steps[1].cmd != "nh os switch /flake" {
+	if steps[1].cmd.String() != "nh os switch /flake" {
 		t.Fatalf("switch cmd = %q", steps[1].cmd)
 	}
-	if steps[2].cmd != "deploy --magic-rollback false .#fabricator" {
+	if steps[2].cmd.String() != "deploy --magic-rollback false .#fabricator" {
 		t.Fatalf("deploy cmd = %q", steps[2].cmd)
 	}
 
@@ -54,7 +54,7 @@ func TestStepsForPlan(t *testing.T) {
 	if len(steps) != 3 || steps[1].verb != "deploy" {
 		t.Fatalf("remote-only steps = %+v", steps)
 	}
-	if strings.Contains(steps[0].cmd, "commit") {
+	if strings.Contains(steps[0].cmd.String(), "commit") {
 		t.Fatalf("no-commit cmd should not mention commit: %q", steps[0].cmd)
 	}
 }
@@ -72,7 +72,7 @@ func TestTargetLabelAndStepCount(t *testing.T) {
 	}
 	for _, c := range cases {
 		got, _ := targetLabel(c.p.Hosts, c.p.SwitchLocal())
-		if got != c.label {
+		if got.String() != c.label {
 			t.Errorf("targetLabel(%+v) = %q, want %q", c.p, got, c.label)
 		}
 		if n := stepCount(c.p.Hosts, c.p.SwitchLocal()); n != c.count {
@@ -203,7 +203,7 @@ func TestRunEventLifecycle(t *testing.T) {
 		m = next.(managerModel)
 	}
 	step(runStepStartMsg{step: 0})
-	step(runLineMsg{step: 0, text: "✓ nixpkgs aaaa → bbbb", tone: toneGood})
+	step(runLineMsg{step: 0, text: ui.Words("✓ nixpkgs aaaa → bbbb"), tone: toneGood})
 	step(runStepEndMsg{step: 0, dur: 2 * time.Second})
 	if !rs.steps[0].done || rs.steps[0].failed {
 		t.Fatalf("step 0 should be done: %+v", rs.steps[0])
@@ -279,7 +279,7 @@ func TestViewSmoke(t *testing.T) {
 	// Run view in each status, plus tiny-terminal layouts.
 	plan := project.Plan{Name: "nfu", Inputs: []string{"nixpkgs"}, LocalSwitch: true, Hosts: []project.HostStep{{Name: "fab"}}}
 	rs := &runState{name: "nfu", plan: plan, steps: stepsForPlan(plan, "/flake"), status: runRunning, started: time.Now(), events: make(chan tea.Msg, 1)}
-	rs.lines = append(rs.lines, runLine{step: 0, text: "hello", tone: toneDim})
+	rs.lines = append(rs.lines, runLine{step: 0, text: ui.Words("hello"), tone: toneDim})
 	m.run = rs
 	m.view = mRun
 	for _, st := range []runStatus{runRunning, runOK, runFail, runDry} {
@@ -318,12 +318,12 @@ func TestDryRunPopulatesPlannedLines(t *testing.T) {
 	steps := stepsForPlan(plan, "/f")
 	rs := &runState{name: "nfu", plan: plan, steps: steps, dry: true, status: runDry}
 	for i, s := range steps {
-		rs.lines = append(rs.lines, runLine{step: i, text: "→ " + s.cmd, tone: toneText})
+		rs.lines = append(rs.lines, runLine{step: i, text: ui.Linef("→ %s", s.cmd), tone: toneText})
 	}
 	if len(rs.lines) != len(steps) {
 		t.Fatalf("lines = %d, want %d", len(rs.lines), len(steps))
 	}
-	if !strings.HasPrefix(rs.lines[0].text, "→ nix flake update") {
+	if !strings.HasPrefix(rs.lines[0].text.String(), "→ nix flake update") {
 		t.Fatalf("first planned line = %q", rs.lines[0].text)
 	}
 }

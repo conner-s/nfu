@@ -36,6 +36,9 @@ import (
 // genuinely wrong, most of all a force-pushed ref still naming content nix has
 // already hashed.
 func (c *Client) Upstream(ctx context.Context, name string, refresh bool) (Input, error) {
+	if err := CheckInputNames(name); err != nil {
+		return Input{}, err
+	}
 	dir, err := os.MkdirTemp("", "nfu-upstream-")
 	if err != nil {
 		return Input{}, fmt.Errorf("upstream probe: %w", err)
@@ -43,14 +46,8 @@ func (c *Client) Upstream(ctx context.Context, name string, refresh bool) (Input
 	defer os.RemoveAll(dir)
 	out := filepath.Join(dir, "flake.lock")
 
-	// --refresh is a nix-level flag, so it precedes the `flake update` subcommand.
 	// The temp dir is per-call, so concurrent probes never share an output path.
-	args := nixArgs()
-	if refresh {
-		args = append(args, "--refresh")
-	}
-	args = append(args, "flake", "update", name, "--output-lock-file", out)
-	if _, err := c.run(ctx, "nix", args...); err != nil {
+	if _, err := c.run(ctx, "nix", upstreamArgs(name, out, refresh)...); err != nil {
 		return Input{}, err
 	}
 
@@ -73,4 +70,16 @@ func (c *Client) Upstream(ctx context.Context, name string, refresh bool) (Input
 		}
 	}
 	return Input{}, fmt.Errorf("upstream probe: %s not in the resulting lock", name)
+}
+
+// upstreamArgs builds the probe's argv. --refresh is a nix-level flag, so it
+// precedes the `flake update` subcommand. The name is last, after `--`:
+// nothing after that is read as an option, which is also why the output file
+// has to come before it.
+func upstreamArgs(name, out string, refresh bool) []string {
+	args := nixArgs()
+	if refresh {
+		args = append(args, "--refresh")
+	}
+	return append(args, "flake", "update", "--output-lock-file", out, "--", name)
 }

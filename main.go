@@ -28,6 +28,7 @@ import (
 	"syscall"
 
 	"github.com/conner-s/nfu/internal/config"
+	"github.com/conner-s/nfu/internal/ui"
 )
 
 const usage = `nfu — flake update helper (the piece nh is missing)
@@ -152,10 +153,13 @@ func main() {
 			fmt.Print(usage) // -h/--help: usage to stdout, exactly once
 			return
 		}
-		fmt.Fprintf(os.Stderr, "nfu: %v\n\n%s", err, usage)
+		// A flag error quotes the argument it could not parse.
+		printError(os.Stderr, err)
+		fmt.Fprintf(os.Stderr, "\n%s", usage)
 		os.Exit(2)
 	}
 
+	warnArgs(os.Stderr, g, positionals)
 	if err := dispatch(ctx, g, positionals); err != nil {
 		fail(g, err)
 	}
@@ -170,9 +174,47 @@ func fail(g globalFlags, err error) {
 			Error string `json:"error"`
 		}{Error: err.Error()})
 	} else {
-		fmt.Fprintln(os.Stderr, "nfu: "+err.Error())
+		printError(os.Stderr, err)
 	}
 	os.Exit(1)
+}
+
+// printError prints an error as `nfu: <err>`. This is the last thing most
+// failed runs print, and the error can quote anything: nix's whole stderr,
+// git's, a name from flake.lock, a path, a TOML file's parse error, an
+// argument. It is cleaned here, keeping its lines. When cleaning cut a line
+// short, a second line says so.
+func printError(w io.Writer, err error) {
+	text, rep := ui.Err(err)
+	fmt.Fprintln(w, "nfu: "+text.String())
+	if note := ui.CutNote(rep.Unterminated); !note.IsEmpty() {
+		fmt.Fprintln(w, "nfu: "+note.String())
+	}
+}
+
+// warnArgs says, on stderr, when something on the command line holds a
+// control sequence, a control character, a bidirectional control or an
+// invisible character: a name pasted from somewhere can carry one and then
+// read as another name. nfu goes on with the argument as it was given (see
+// ui.ArgWarning); this is the visible sign that it is not what it looks like.
+func warnArgs(w io.Writer, g globalFlags, positionals []string) {
+	warn := func(what, raw string) {
+		if msg := ui.ArgWarning(what, raw); !msg.IsEmpty() {
+			fmt.Fprintln(w, "nfu: "+msg.String())
+		}
+	}
+	for _, p := range positionals {
+		warn("An argument", p)
+	}
+	for _, f := range []struct{ name, value string }{
+		{"--flake", g.flake}, {"--config", g.config},
+		{"--inputs", g.inputs}, {"--includes", g.includes}, {"--hosts", g.hosts},
+	} {
+		warn("The value of "+f.name, f.value)
+	}
+	for _, v := range g.hostArgs {
+		warn("The value of --host-args", v)
+	}
 }
 
 // dispatch routes positionals to a command. The reserved first words

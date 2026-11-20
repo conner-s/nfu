@@ -419,3 +419,19 @@ consumers of it plus `internal/lock` (the commit orchestration) and
 - Module path: `github.com/conner-s/nfu`. The binary is
   self-contained (everything under `internal/`), so `buildGoModule` never
   fetches the path (it builds from `./.`).
+
+### Text nfu did not write
+
+A `flake.lock` field, a project file, a path, what nix or deploy printed, what
+you typed: none of it is drawn or printed raw. It is cleaned by the
+[termsafe](https://github.com/conner-s/termsafe) module
+first, and everything that draws takes a `termsafe.Text`, which only cleaning
+can make. [docs/untrusted-text.md](docs/untrusted-text.md) follows every such
+value from where it comes in to where it is shown, says what nfu tells you
+when cleaning changed something, and lists what gets the raw value on purpose.
+A new path to the screen goes into that table and into the entry tables of
+`internal/tui/hostile_test.go` and `hostile_test.go`.
+
+`nh os switch` and `deploy` under `nfu project run`, `sudo -v`, and `$EDITOR`
+are given the terminal. nfu does not stand between them and the screen and
+cannot clean what they write.

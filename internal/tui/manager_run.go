@@ -12,6 +12,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/conner-s/termsafe"
 
 	"github.com/conner-s/nfu/internal/flake"
 	"github.com/conner-s/nfu/internal/lock"
@@ -22,6 +23,8 @@ import (
 
 // stepsForPlan lays a plan out as the run view's step list. Ordering must match
 // the engine's emission order: update, then switch (when local), then each host.
+// The plan's inputs, hosts and arguments come from project files, and root from
+// the configuration; they are cleaned here, where they become text to draw.
 func stepsForPlan(plan project.Plan, root string) []runStep {
 	commit := ""
 	if plan.Commit {
@@ -30,26 +33,27 @@ func stepsForPlan(plan project.Plan, root string) []runStep {
 	steps := []runStep{{
 		verb:   "update",
 		icon:   "↻",
-		title:  "update inputs",
-		detail: strings.Join(plan.Inputs, ", "),
-		cmd:    "nix flake update " + strings.Join(plan.Inputs, " ") + commit,
+		title:  ui.Words("update inputs"),
+		detail: ui.Names(plan.Inputs, ", "),
+		cmd:    ui.Linef("nix flake update %s%s", ui.Names(plan.Inputs, " "), commit),
 	}}
 	if plan.LocalSwitch {
 		steps = append(steps, runStep{
 			verb:   "switch",
 			icon:   "❄",
-			title:  "nh os switch",
-			detail: root,
-			cmd:    "nh os switch " + root,
+			title:  ui.Words("nh os switch"),
+			detail: ui.Line(root),
+			cmd:    ui.Linef("nh os switch %s", root),
 		})
 	}
 	for _, h := range plan.Hosts {
+		argv := ui.Names(h.Argv(), " ")
 		steps = append(steps, runStep{
 			verb:   "deploy",
 			icon:   "➤",
-			title:  "deploy " + h.Name,
-			detail: strings.Join(h.Argv(), " "),
-			cmd:    "deploy " + strings.Join(h.Argv(), " "),
+			title:  ui.Linef("deploy %s", h.Name),
+			detail: argv,
+			cmd:    ui.Linef("deploy %s", argv),
 		})
 	}
 	return steps
@@ -65,11 +69,11 @@ func (m managerModel) startRun(dry bool) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if m.run != nil && m.run.status == runRunning {
-		return m, m.say("a run is already in flight", toneWarn)
+		return m, m.say(ui.Words("a run is already in flight"), toneWarn)
 	}
 	plan, err := project.BuildPlan(m.deps.Catalog, e.Name, m.deps.Commit)
 	if err != nil {
-		return m, m.say("✗ "+shortErr(err), toneBad)
+		return m, m.sayErr("", err)
 	}
 	root := m.deps.Client.Root()
 	steps := stepsForPlan(plan, root)
@@ -79,19 +83,19 @@ func (m managerModel) startRun(dry bool) (tea.Model, tea.Cmd) {
 	m.runNo++
 
 	if dry {
-		rs := &runState{name: e.Name, plan: plan, steps: steps, dry: true, no: m.runNo, status: runDry, cur: len(steps) - 1}
+		rs := &runState{name: e.Name, title: ui.Name(e.Name), plan: plan, steps: steps, dry: true, no: m.runNo, status: runDry, cur: len(steps) - 1}
 		for i, s := range steps {
-			rs.lines = append(rs.lines, runLine{step: i, text: "→ " + s.cmd, tone: toneText})
+			rs.lines = append(rs.lines, runLine{step: i, text: ui.Linef("→ %s", s.cmd), tone: toneText})
 		}
 		m.run = rs
 		m.view = mRun
-		return m, m.say("dry-run · nothing executed", toneWarn)
+		return m, m.say(ui.Words("dry-run · nothing executed"), toneWarn)
 	}
 
 	runCtx, cancel := context.WithCancel(m.ctx)
 	m.runCancel = cancel
 	rs := &runState{
-		name: e.Name, plan: plan, steps: steps, no: m.runNo,
+		name: e.Name, title: ui.Name(e.Name), plan: plan, steps: steps, no: m.runNo,
 		status: runRunning, started: time.Now(),
 		events: make(chan tea.Msg, 64),
 	}
@@ -101,6 +105,7 @@ func (m managerModel) startRun(dry bool) (tea.Model, tea.Cmd) {
 	// Pre-authorize sudo for the local switch: tea.ExecProcess hands the real
 	// terminal to `sudo -v`, so a password prompt works; with cached credentials
 	// it returns instantly. Remote-only plans skip straight to the engine.
+	// What sudo writes while it has the terminal is not cleaned.
 	if plan.LocalSwitch {
 		if sudo, err := exec.LookPath("sudo"); err == nil {
 			rs.waitingSudo = true
@@ -118,11 +123,11 @@ func (m managerModel) handleSudoDone(msg sudoDoneMsg) (tea.Model, tea.Cmd) {
 	rs.waitingSudo = false
 	if msg.err != nil {
 		rs.status = runFail
-		rs.lines = append(rs.lines, runLine{step: rs.cur, text: "sudo authorization failed — run aborted", tone: toneBad})
+		rs.lines = append(rs.lines, runLine{step: rs.cur, text: ui.Words("sudo authorization failed — run aborted"), tone: toneBad})
 		if m.runCancel != nil {
 			m.runCancel()
 		}
-		return m, m.say("✗ sudo authorization failed", toneBad)
+		return m, m.say(ui.Words("✗ sudo authorization failed"), toneBad)
 	}
 	rs.started = time.Now() // don't count the password prompt as pipeline time
 	runCtx, cancel := context.WithCancel(m.ctx)
@@ -146,7 +151,7 @@ func (m managerModel) cancelRun() (tea.Model, tea.Cmd) {
 	}
 	// The engine notices the dead context, fails its current step, and emits
 	// runEndMsg — the pump stays alive until then.
-	return m, m.say("cancelling…", toneWarn)
+	return m, m.say(ui.Words("cancelling…"), toneWarn)
 }
 
 // waitEvent pumps one engine event into the update loop; the handler re-arms it
@@ -206,17 +211,35 @@ func (m *managerModel) finishRun(rs *runState, err error) tea.Cmd {
 		_ = m.deps.Record(rs.plan, rec) // history is best-effort, never fatal
 	}
 	if err != nil {
-		return m.say("✗ "+shortErr(err), toneBad)
+		return m.sayErr("", err)
 	}
-	return m.say(fmt.Sprintf("✓ %d steps complete", len(rs.steps)), toneGood)
+	return m.say(ui.Linef("✓ %d steps complete", len(rs.steps)), toneGood)
 }
 
 // runEngine executes the pipeline, emitting progress events. Step indices match
 // stepsForPlan: 0 update, then switch (when local), then one per host. It owns
 // no model state — everything flows through ch, ending with exactly one
 // runEndMsg.
+//
+// This is where the run pane's log is written, so it is where that text is
+// cleaned: say takes a termsafe.Text, built by ui.Linef from a result or a
+// warning, by ui.ErrLines from an error, or by proc.RunLines from a line of nh
+// or deploy.
 func runEngine(ctx context.Context, client *flake.Client, plan project.Plan, ch chan<- tea.Msg) {
 	emit := func(msg tea.Msg) { ch <- msg }
+	say := func(step int, t tone, text termsafe.Text) {
+		emit(runLineMsg{step: step, text: text, tone: t})
+	}
+	// logLine takes one line of a child's output. A control string without a
+	// terminator took the rest of its line with it; say so under that line.
+	logLine := func(step int) func(termsafe.Text, termsafe.Report) {
+		return func(l termsafe.Text, rep termsafe.Report) {
+			say(step, toneDim, l)
+			if note := ui.CutNote(rep.Unterminated); !note.IsEmpty() {
+				say(step, toneWarn, note)
+			}
+		}
+	}
 	var (
 		moved    int
 		switched bool
@@ -234,7 +257,9 @@ func runEngine(ctx context.Context, client *flake.Client, plan project.Plan, ch 
 	}
 	fail := func(step int, t0 time.Time, err error) {
 		emit(runStepEndMsg{step: step, dur: time.Since(t0), err: err})
-		emit(runLineMsg{step: step, text: "✗ " + err.Error(), tone: toneBad})
+		for _, l := range failLines(err) {
+			emit(l.at(step))
+		}
 		emit(runEndMsg{err: err, detail: detail()})
 	}
 
@@ -246,19 +271,19 @@ func runEngine(ctx context.Context, client *flake.Client, plan project.Plan, ch 
 	for _, r := range results {
 		switch {
 		case r.Unchanged:
-			emit(runLineMsg{step: step, text: fmt.Sprintf("• %s already current (%s)", r.Input, ui.ShortPin(r.OldPin)), tone: toneDim})
+			say(step, toneDim, ui.Linef("• %s already current (%s)", r.Input, ui.Pin(r.OldPin)))
 		default:
 			moved++
-			emit(runLineMsg{step: step, text: fmt.Sprintf("✓ %s %s → %s", r.Input, ui.ShortPin(r.OldPin), ui.ShortPin(r.NewPin)), tone: toneGood})
+			say(step, toneGood, ui.Linef("✓ %s %s → %s", r.Input, ui.Pin(r.OldPin), ui.Pin(r.NewPin)))
 		}
 	}
 	if results != nil {
 		committed, msg, warn := lock.Commit(ctx, client.Root(), results, plan.Commit)
 		if committed {
-			emit(runLineMsg{step: step, text: "committed flake.lock: " + msg, tone: toneGood})
+			say(step, toneGood, ui.Linef("committed flake.lock: %s", msg))
 		}
 		if warn != "" {
-			emit(runLineMsg{step: step, text: "! " + warn, tone: toneWarn})
+			say(step, toneWarn, ui.Linef("! %s", warn))
 		}
 	}
 	if updErr != nil {
@@ -272,10 +297,7 @@ func runEngine(ctx context.Context, client *flake.Client, plan project.Plan, ch 
 		step++
 		emit(runStepStartMsg{step: step})
 		t0 = time.Now()
-		i := step
-		err := proc.RunLines(ctx, client.Root(), func(l string) {
-			emit(runLineMsg{step: i, text: l, tone: toneDim})
-		}, "nh", "os", "switch", client.Root())
+		err := proc.RunLines(ctx, client.Root(), logLine(step), "nh", "os", "switch", client.Root())
 		if err != nil {
 			fail(step, t0, err)
 			return
@@ -289,11 +311,7 @@ func runEngine(ctx context.Context, client *flake.Client, plan project.Plan, ch 
 		step++
 		emit(runStepStartMsg{step: step})
 		t0 = time.Now()
-		i := step
-		argv := h.Argv()
-		err := proc.RunLines(ctx, client.Root(), func(l string) {
-			emit(runLineMsg{step: i, text: l, tone: toneDim})
-		}, "deploy", argv...)
+		err := proc.RunLines(ctx, client.Root(), logLine(step), "deploy", h.Argv()...)
 		if err != nil {
 			fail(step, t0, err)
 			return
@@ -303,4 +321,28 @@ func runEngine(ctx context.Context, client *flake.Client, plan project.Plan, ch 
 	}
 
 	emit(runEndMsg{detail: detail()})
+}
+
+// failLines are the log lines for a step that failed with err: "✗" and the
+// whole error, one pane line per line of it, since an error from nix carries
+// nix's stderr; then a note when cleaning cut a line short. The step they
+// belong to is filled in by at.
+func failLines(err error) []runLineMsg {
+	lines, rep := ui.ErrLines(err)
+	out := make([]runLineMsg, 0, len(lines)+1)
+	for i, l := range lines {
+		if i == 0 {
+			l = ui.Linef("✗ %s", l)
+		}
+		out = append(out, runLineMsg{text: l, tone: toneBad})
+	}
+	if note := ui.CutNote(rep.Unterminated); !note.IsEmpty() {
+		out = append(out, runLineMsg{text: note, tone: toneWarn})
+	}
+	return out
+}
+
+func (l runLineMsg) at(step int) runLineMsg {
+	l.step = step
+	return l
 }

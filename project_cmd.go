@@ -8,6 +8,9 @@ import (
 	"os"
 	"strings"
 	"time"
+	"unicode/utf8"
+
+	"github.com/conner-s/termsafe"
 
 	"github.com/conner-s/nfu/internal/config"
 	"github.com/conner-s/nfu/internal/flake"
@@ -113,7 +116,7 @@ func runProjectRun(ctx context.Context, g globalFlags, names []string) error {
 	}
 
 	for _, p := range plans {
-		fmt.Print(project.RenderPlan(s, p, client.Root()))
+		fmt.Print(project.RenderPlan(s, p.Text(client.Root())))
 	}
 
 	if g.dryRun {
@@ -131,7 +134,7 @@ func runProjectRun(ctx context.Context, g globalFlags, names []string) error {
 	}
 
 	if !g.yes {
-		ok, err := confirm(s, "proceed?")
+		ok, err := confirm(s, ui.Words("proceed?"))
 		if err != nil {
 			return err
 		}
@@ -175,7 +178,9 @@ func runProjectUse(ctx context.Context, g globalFlags, args []string) error {
 			fmt.Println(s.Dim.Render("no current project set"))
 			return nil
 		}
-		fmt.Println(cur)
+		// The marker file is anyone's to write. A name nfu itself would
+		// accept is plain ASCII and prints as it is.
+		fmt.Println(ui.Name(cur))
 		return nil
 	}
 	name := args[0]
@@ -192,7 +197,7 @@ func runProjectUse(ctx context.Context, g globalFlags, args []string) error {
 	if err := project.WriteCurrent(configDir, name); err != nil {
 		return err
 	}
-	fmt.Printf("%s %s\n", s.Good.Render("current project:"), s.Value.Render(name))
+	fmt.Printf("%s %s\n", s.Good.Render("current project:"), s.Value.Render(ui.Name(name).String()))
 	return nil
 }
 
@@ -255,64 +260,89 @@ func runProjectList(ctx context.Context, g globalFlags) error {
 // renderProjectList renders the aligned project table. Every row shows what a
 // run would actually move — a bundle's columns come from its flattened includes,
 // not from its own (empty) input list.
+//
+// Names, inputs and hosts come from project files, and the reason a project
+// will not resolve quotes them: each is cleaned where its row is put together.
 func renderProjectList(s ui.Styles, cat *project.Catalog, entries []project.Entry, cur string) string {
+	type row struct {
+		marker                             string
+		name, inputs, hosts, broken, notes termsafe.Text
+		source, sw                         string
+	}
+	rows := make([]row, 0, len(entries))
 	var wn int
 	for _, e := range entries {
-		if n := len(e.Name); n > wn {
-			wn = n
-		}
-	}
-	var b strings.Builder
-	for _, e := range entries {
-		marker := " "
+		r := row{marker: " ", name: ui.Name(e.Name), source: e.Source, hosts: ui.Words("—")}
 		if e.Name == cur {
-			marker = "*"
+			r.marker = "*"
 		}
 		inputs, hostList, localSwitch := e.Project.Inputs, e.Project.Hosts, e.Project.SwitchLocal()
-		broken := ""
-		if r, err := project.Resolve(cat, e.Name); err == nil {
-			inputs, hostList, localSwitch = r.Inputs, project.HostNames(r.Hosts), r.LocalSwitch
+		if res, err := project.Resolve(cat, e.Name); err == nil {
+			inputs, hostList, localSwitch = res.Inputs, project.HostNames(res.Hosts), res.LocalSwitch
 		} else {
 			// A row that will not resolve still lists — with why, so a bad
 			// `includes` is visible here instead of only when the run refuses.
-			broken = " ! " + err.Error()
+			r.broken = ui.Linef(" ! %s", err)
 		}
-		hosts := "—"
+		r.inputs = ui.Names(inputs, " ")
 		if len(hostList) > 0 {
-			hosts = strings.Join(hostList, ", ")
+			r.hosts = ui.Names(hostList, ", ")
 		}
-		sw := ""
 		if !localSwitch {
-			sw = " (no switch)"
+			r.sw = " (no switch)"
 		}
-		fmt.Fprintf(&b, " %s %s  %s  %s %s %s%s%s\n",
-			s.Good.Render(marker),
-			s.Value.Render(padName(e.Name, wn)),
-			s.Dim.Render("["+e.Source+"]"),
-			s.Label.Render(strings.Join(inputs, " ")),
+		var notes []string
+		for _, in := range inputs {
+			if n := ui.InputNameNote(in); !n.IsEmpty() {
+				notes = append(notes, ui.Linef("input %s: %s", in, n).String())
+			}
+		}
+		for _, h := range hostList {
+			if n := ui.HostNameNote(h); !n.IsEmpty() {
+				notes = append(notes, ui.Linef("host %s: %s", h, n).String())
+			}
+		}
+		if len(notes) > 0 {
+			r.notes = ui.Words(" ! " + strings.Join(notes, "; "))
+		}
+		wn = max(wn, utf8.RuneCountInString(r.name.String()))
+		rows = append(rows, r)
+	}
+	var b strings.Builder
+	for _, r := range rows {
+		fmt.Fprintf(&b, " %s %s  %s  %s %s %s%s%s%s\n",
+			s.Good.Render(r.marker),
+			s.Value.Render(padName(r.name.String(), wn)),
+			s.Dim.Render("["+r.source+"]"),
+			s.Label.Render(r.inputs.String()),
 			s.Dim.Render("→"),
-			s.Value.Render(hosts),
-			s.Dim.Render(sw),
-			s.Warn.Render(broken),
+			s.Value.Render(r.hosts.String()),
+			s.Dim.Render(r.sw),
+			s.Warn.Render(r.broken.String()),
+			s.Warn.Render(r.notes.String()),
 		)
 	}
 	return b.String()
 }
 
 func padName(s string, n int) string {
-	if len(s) < n {
-		return s + strings.Repeat(" ", n-len(s))
+	if w := utf8.RuneCountInString(s); w < n {
+		return s + strings.Repeat(" ", n-w)
 	}
 	return s
 }
 
-// runSummary is the one-line closing report for a completed pipeline.
+// runSummary is the one-line closing report for a completed pipeline. The
+// project's name and the hosts in the summary are cleaned here.
 func runSummary(s ui.Styles, name string, res project.Result) string {
-	return fmt.Sprintf("%s %s  %s\n", s.Good.Render("✓"), s.Value.Render(name), s.Dim.Render(summaryParts(res)))
+	return fmt.Sprintf("%s %s  %s\n", s.Good.Render("✓"), s.Value.Render(ui.Name(name).String()),
+		s.Dim.Render(ui.Line(summaryParts(res)).String()))
 }
 
 // summaryParts condenses a run result to "updated N · switched · deployed …",
-// shared by the closing report and the recorded run history.
+// shared by the closing report and the recorded run history. It is as raw as
+// the host names in it: the history file gets it as it is, and whatever draws
+// it cleans it.
 func summaryParts(res project.Result) string {
 	moved := 0
 	for _, r := range res.Updates {
@@ -336,13 +366,14 @@ var stdin = bufio.NewReader(os.Stdin)
 
 // confirm asks the user to approve a destructive run. Without a TTY it refuses
 // rather than proceed unattended — pass -y for that.
-func confirm(s ui.Styles, prompt string) (bool, error) {
+func confirm(s ui.Styles, prompt termsafe.Text) (bool, error) {
 	return confirmDefault(s, prompt, false)
 }
 
 // confirmDefault is confirm with a chosen answer for a bare Enter: running a
 // pipeline defaults to no, committing a project file you just saved to yes.
-func confirmDefault(s ui.Styles, prompt string, def bool) (bool, error) {
+// The prompt can name files and a repository, so it is a termsafe.Text.
+func confirmDefault(s ui.Styles, prompt termsafe.Text, def bool) (bool, error) {
 	if !isTTY(os.Stdin) {
 		return false, fmt.Errorf("refusing to run unattended without a terminal; pass -y/--yes to confirm")
 	}
@@ -350,7 +381,7 @@ func confirmDefault(s ui.Styles, prompt string, def bool) (bool, error) {
 	if def {
 		hint = "[Y/n]"
 	}
-	fmt.Printf("\n%s %s ", s.Warn.Render(prompt), hint)
+	fmt.Printf("\n%s %s ", s.Warn.Render(prompt.String()), hint)
 	line, err := stdin.ReadString('\n')
 	if err != nil && err != io.EOF {
 		return false, err

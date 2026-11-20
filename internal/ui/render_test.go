@@ -64,7 +64,7 @@ func TestRenderResultsSmoke(t *testing.T) {
 		{Input: "totality", OldPin: "6bdb38aa582f3ab09bb61a9fddd4cec7e069eee2", NewPin: "1122334455667788990011223344556677889900", OldMod: 1784048328, NewMod: 1784099000},
 		{Input: "npk", OldPin: "same", NewPin: "same", Unchanged: true},
 	}
-	out := RenderResults(s, results, now)
+	out := RenderResults(s, ResultRows(results), now)
 	if !strings.Contains(out, "totality") || !strings.Contains(out, "npk") {
 		t.Errorf("RenderResults missing inputs:\n%s", out)
 	}
@@ -81,7 +81,7 @@ func TestRenderResultsThemedSmoke(t *testing.T) {
 	}
 	for _, name := range theme.Names() {
 		s := StylesFor(name)
-		out := RenderResults(s, results, int64(1_784_100_000))
+		out := RenderResults(s, ResultRows(results), int64(1_784_100_000))
 		if !strings.Contains(out, "totality") {
 			t.Errorf("theme %q: RenderResults missing input:\n%s", name, out)
 		}
@@ -103,7 +103,7 @@ func TestRenderInputListSmoke(t *testing.T) {
 		{Name: "nixpkgs", Type: "github", Ref: "nixos-26.05", Rev: "1111111111111111111111111111111111111111", LastModified: 1784000000},
 		{Name: "mirror", Follows: true},
 	}
-	out := RenderInputList(s, inputs, 1784100000)
+	out := RenderInputList(s, InputRows(inputs), 1784100000)
 	if !strings.Contains(out, "nixpkgs") {
 		t.Errorf("missing nixpkgs:\n%s", out)
 	}

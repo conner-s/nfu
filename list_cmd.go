@@ -41,7 +41,7 @@ func runList(ctx context.Context, g globalFlags) error {
 	}
 	s := ui.StylesFor(cfg.Theme)
 	fmt.Print(titleLine(s, client.Root()))
-	fmt.Print(ui.RenderInputList(s, inputs, time.Now().Unix()))
+	fmt.Print(ui.RenderInputList(s, ui.InputRows(inputs), time.Now().Unix()))
 	return nil
 }
 

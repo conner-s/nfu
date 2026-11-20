@@ -213,3 +213,25 @@ func TestDefaultPathXDG(t *testing.T) {
 		t.Errorf("DefaultPath() = %q", got)
 	}
 }
+
+// The flake root is an argument of `nh os switch <root>`. Resolve makes it
+// absolute, so a directory whose name starts with a dash still reaches nh as a
+// path and not as an option.
+func TestResolveMakesADashLedRootAbsolute(t *testing.T) {
+	parent := t.TempDir()
+	root := filepath.Join(parent, "-x")
+	if err := os.Mkdir(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "flake.nix"), []byte("{}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(parent)
+	got, err := Resolve(&Config{}, "-x")
+	if err != nil {
+		t.Fatalf("Resolve(-x): %v", err)
+	}
+	if !filepath.IsAbs(got) || filepath.Base(got) != "-x" {
+		t.Errorf("Resolve(-x) = %q, want an absolute path", got)
+	}
+}

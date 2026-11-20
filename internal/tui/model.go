@@ -6,12 +6,11 @@ package tui
 import (
 	"context"
 	"errors"
-	"strings"
 	"time"
-	"unicode/utf8"
 
 	"charm.land/bubbles/v2/spinner"
 	tea "charm.land/bubbletea/v2"
+	"github.com/conner-s/termsafe"
 
 	"github.com/conner-s/nfu/internal/flake"
 	"github.com/conner-s/nfu/internal/lock"
@@ -32,12 +31,30 @@ type inputsLoadedMsg struct {
 	err    error
 }
 
+// updateFinishedMsg ends an update. The commit subject and the warning are
+// drawn, and both quote what is in flake.lock or what git said, so they are
+// termsafe.Text: finished is the one place that builds this message.
 type updateFinishedMsg struct {
 	results   []flake.UpdateResult
 	err       error
 	committed bool
-	commitMsg string
-	warn      string
+	commitMsg termsafe.Text
+	warn      termsafe.Text
+}
+
+func finished(results []flake.UpdateResult, err error, committed bool, commitMsg, warn string) updateFinishedMsg {
+	return updateFinishedMsg{
+		results: results, err: err, committed: committed,
+		commitMsg: ui.Line(commitMsg), warn: ui.Line(warn),
+	}
+}
+
+// probed is the answer of one upstream probe: the input as nix resolved it,
+// which the view compares with the locked one, and its pin cleaned for
+// display.
+type probed struct {
+	in  flake.Input
+	pin termsafe.Text
 }
 
 // upstreamMsg carries the result of ONE input's upstream probe. Every probe is
@@ -69,7 +86,7 @@ type model struct {
 	inputs   []flake.Input
 	cursor   int
 	selected map[int]bool
-	updating []string
+	updating termsafe.Text // the names being updated, for the status line
 
 	// Upstream-probe state (the `f`/`F`/`r`/`R` hotkeys). checking holds inputs
 	// with an in-flight probe (drives the per-row spinner); upstream holds the
@@ -77,14 +94,14 @@ type model struct {
 	// name. All keyed by input name so a re-fetch simply overwrites. sem bounds
 	// how many probes talk to nix at once (see probeLimit).
 	checking    map[string]bool
-	upstream    map[string]flake.Input
-	upstreamErr map[string]string
+	upstream    map[string]probed
+	upstreamErr map[string]termsafe.Text
 	sem         chan struct{}
 
 	results   []flake.UpdateResult
 	committed bool
-	commitMsg string
-	warn      string
+	commitMsg termsafe.Text
+	warn      termsafe.Text
 	err       error
 	canceled  bool
 }
@@ -111,8 +128,8 @@ func Run(ctx context.Context, client *flake.Client, commit bool, s ui.Styles) er
 		state:       stateLoading,
 		selected:    map[int]bool{},
 		checking:    map[string]bool{},
-		upstream:    map[string]flake.Input{},
-		upstreamErr: map[string]string{},
+		upstream:    map[string]probed{},
+		upstreamErr: map[string]termsafe.Text{},
 		sem:         make(chan struct{}, probeLimit),
 	}
 	final, err := tea.NewProgram(m, tea.WithContext(cctx)).Run()
@@ -148,7 +165,7 @@ func (m model) doUpdate(names []string) tea.Cmd {
 		if results != nil {
 			committed, commitMsg, warn = lock.Commit(m.ctx, m.client.Root(), results, m.commit)
 		}
-		return updateFinishedMsg{results: results, err: err, committed: committed, commitMsg: commitMsg, warn: warn}
+		return finished(results, err, committed, commitMsg, warn)
 	}
 }
 
@@ -208,10 +225,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.now = time.Now().Unix()
 		delete(m.checking, msg.name)
 		if msg.err != nil {
-			m.upstreamErr[msg.name] = shortErr(msg.err)
+			m.upstreamErr[msg.name] = ui.ErrLine(msg.err)
 			return m, nil
 		}
-		m.upstream[msg.name] = msg.in
+		m.upstream[msg.name] = probed{in: msg.in, pin: ui.Pin(msg.in.Pin())}
 		delete(m.upstreamErr, msg.name)
 		return m, nil
 
@@ -254,7 +271,7 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "G", "end":
 		m.cursor = len(m.inputs) - 1
 	case "space", "x":
-		if m.cursor < len(m.inputs) && !m.inputs[m.cursor].Follows {
+		if m.cursor < len(m.inputs) && selectable(m.inputs[m.cursor]) {
 			m.selected[m.cursor] = !m.selected[m.cursor]
 		}
 	case "a":
@@ -283,7 +300,7 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.state = stateDone
 			return m, tea.Quit
 		}
-		m.updating = names
+		m.updating = ui.Names(names, " ")
 		m.state = stateUpdating
 		return m, tea.Batch(m.spinner.Tick, m.doUpdate(names))
 	}
@@ -309,8 +326,9 @@ func (m model) startFetch(all, refresh bool) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		in := m.inputs[m.cursor]
-		if in.Follows {
-			// A `follows` alias has no independent lock entry to probe.
+		if !selectable(in) {
+			// A `follows` alias has no independent lock entry to probe, and an
+			// input nix cannot be asked for by name cannot be probed by name.
 			return m, nil
 		}
 		targets = []string{in.Name}
@@ -337,7 +355,7 @@ func (m *model) toggleAll() {
 	// If every selectable input is already selected, clear; otherwise select all.
 	allOn := true
 	for i, in := range m.inputs {
-		if in.Follows {
+		if !selectable(in) {
 			continue
 		}
 		if !m.selected[i] {
@@ -346,7 +364,7 @@ func (m *model) toggleAll() {
 		}
 	}
 	for i, in := range m.inputs {
-		if in.Follows {
+		if !selectable(in) {
 			continue
 		}
 		m.selected[i] = !allOn
@@ -356,7 +374,7 @@ func (m *model) toggleAll() {
 func (m model) selectedNames() []string {
 	var names []string
 	for i, in := range m.inputs {
-		if in.Follows {
+		if !selectable(in) {
 			continue
 		}
 		if m.selected[i] {
@@ -374,31 +392,26 @@ func (m model) probeOrder() []string {
 	names := make([]string, 0, len(m.inputs))
 	for off := range m.inputs {
 		in := m.inputs[(m.cursor+off)%len(m.inputs)]
-		if !in.Follows {
+		if selectable(in) {
 			names = append(names, in.Name)
 		}
 	}
 	return names
 }
 
-// shortErr condenses a probe error to a single trimmed, length-capped line for
-// an inline row marker — the full multi-line nix stderr would overflow the table.
-func shortErr(err error) string {
-	s := err.Error()
-	if i := strings.IndexByte(s, '\n'); i >= 0 {
-		s = s[:i]
-	}
-	s = strings.TrimSpace(s)
-	const maxLen = 64
-	if utf8.RuneCountInString(s) > maxLen {
-		s = string([]rune(s)[:maxLen-1]) + "…"
-	}
-	return s
+// selectable reports whether an input can be picked for an update or a probe.
+// A `follows` alias has no lock entry of its own. An input whose name is not
+// an input name by nix's rule cannot be named on nix's command line: named
+// `--refresh`, it would be read as an option. The picker never offers it, and
+// its row says why (ui.InputNameNote); internal/flake refuses such a name by
+// itself as well.
+func selectable(in flake.Input) bool {
+	return !in.Follows && flake.IsInputName(in.Name)
 }
 
 func firstSelectable(inputs []flake.Input) int {
 	for i, in := range inputs {
-		if !in.Follows {
+		if selectable(in) {
 			return i
 		}
 	}
@@ -407,7 +420,7 @@ func firstSelectable(inputs []flake.Input) int {
 
 func anySelectable(inputs []flake.Input) bool {
 	for _, in := range inputs {
-		if !in.Follows {
+		if selectable(in) {
 			return true
 		}
 	}
@@ -425,9 +438,4 @@ func clamp(v, lo, hi int) int {
 		return hi
 	}
 	return v
-}
-
-// buildUpdatingLabel is used by the view; kept here for locality with updating.
-func (m model) buildUpdatingLabel() string {
-	return strings.Join(m.updating, " ")
 }

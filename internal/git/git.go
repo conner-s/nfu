@@ -10,6 +10,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 )
@@ -19,6 +20,9 @@ const LockFile = "flake.lock"
 
 // run executes git in dir with an arg slice (no shell), returning trimmed
 // stdout and, on failure, an error carrying trimmed stderr.
+//
+// Nothing nfu passes can be read as an option: dir is the value of -C, a
+// commit subject is the value of -m, and paths stand after `--`.
 func run(ctx context.Context, dir string, args ...string) (string, error) {
 	bin, err := exec.LookPath("git")
 	if err != nil {
@@ -26,6 +30,11 @@ func run(ctx context.Context, dir string, args ...string) (string, error) {
 	}
 	full := append([]string{"-C", dir}, args...)
 	cmd := exec.CommandContext(ctx, bin, full...)
+	// Every path nfu gives git is the name of one file. Without this git
+	// reads a path as a pattern: `*.toml` matches every such file, and a name
+	// that starts with `:` is pathspec magic (`:(top)x` is x at the top of
+	// the tree), even after `--`.
+	cmd.Env = append(os.Environ(), "GIT_LITERAL_PATHSPECS=1")
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr

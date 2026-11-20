@@ -6,11 +6,13 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/conner-s/nfu/internal/flake"
+	"github.com/conner-s/termsafe"
 )
 
-// ShortPin abbreviates a locked pin for display: a 40-char git rev becomes its
-// 7-char short form; a narHash is trimmed of its algorithm prefix and clipped.
+// ShortPin abbreviates a locked pin: a 40-char git rev becomes its 7-char short
+// form; a narHash is trimmed of its algorithm prefix and clipped. The result is
+// as raw as the pin was. It goes into the flake.lock commit subject as it is;
+// to draw a pin, use Pin, which cleans first.
 func ShortPin(pin string) string {
 	if pin == "" {
 		return "—"
@@ -20,8 +22,9 @@ func ShortPin(pin string) string {
 	}
 	pin = strings.TrimPrefix(pin, "sha256-")
 	pin = strings.TrimPrefix(pin, "sha512-")
-	if len(pin) > 12 {
-		return pin[:12]
+	// Twelve characters, not twelve bytes: half a character is a raw byte.
+	if r := []rune(pin); len(r) > 12 {
+		return string(r[:12])
 	}
 	return pin
 }
@@ -104,56 +107,58 @@ func padRight(s string, n int) string {
 	return s
 }
 
-// RenderInputList renders the flake's inputs as an aligned table.
-func RenderInputList(s Styles, inputs []flake.Input, now int64) string {
-	type row struct {
-		name, typ, ref, pin, age string
-		follows                  bool
+// TitleLine renders the heading of a listing: a name, then the path it stands
+// for, then a blank line.
+func TitleLine(s Styles, name, path termsafe.Text) string {
+	return fmt.Sprintf("%s  %s\n\n", s.Title.Render(name.String()), s.Dim.Render(path.String()))
+}
+
+// noteSuffix renders a row's note (InputRow.Note) after the row, or nothing.
+func noteSuffix(s Styles, note termsafe.Text) string {
+	if note.IsEmpty() {
+		return ""
 	}
-	rows := make([]row, 0, len(inputs))
+	return "  " + s.Warn.Render("! "+note.String())
+}
+
+// RenderInputList renders the flake's inputs as an aligned table.
+func RenderInputList(s Styles, inputs []InputRow, now int64) string {
 	var wn, wt, wr, wp int
-	for _, in := range inputs {
-		r := row{
-			name:    in.Name,
-			typ:     in.Type,
-			ref:     in.Ref,
-			pin:     ShortPin(in.Pin()),
-			age:     RelAge(in.LastModified, now),
-			follows: in.Follows,
+	refs := make([]string, len(inputs))
+	for i, r := range inputs {
+		refs[i] = r.Ref.String()
+		if r.Follows {
+			refs[i] = "follows"
 		}
-		if r.follows {
-			r.ref = "follows"
-		}
-		rows = append(rows, r)
-		wn = max(wn, utf8.RuneCountInString(r.name))
-		wt = max(wt, utf8.RuneCountInString(r.typ))
-		wr = max(wr, utf8.RuneCountInString(r.ref))
-		wp = max(wp, utf8.RuneCountInString(r.pin))
+		wn = max(wn, utf8.RuneCountInString(r.Name.String()))
+		wt = max(wt, utf8.RuneCountInString(r.Type.String()))
+		wr = max(wr, utf8.RuneCountInString(refs[i]))
+		wp = max(wp, utf8.RuneCountInString(r.Pin.String()))
 	}
 
 	var b strings.Builder
-	for _, r := range rows {
-		name := s.Value.Render(padRight(r.name, wn))
-		if r.follows {
-			name = s.Dim.Render(padRight(r.name, wn))
+	for i, r := range inputs {
+		name := s.Value.Render(padRight(r.Name.String(), wn))
+		if r.Follows {
+			name = s.Dim.Render(padRight(r.Name.String(), wn))
 		}
 		line := fmt.Sprintf("  %s  %s  %s  %s  %s",
 			name,
-			s.Label.Render(padRight(r.typ, wt)),
-			s.Dim.Render(padRight(r.ref, wr)),
-			s.Value.Render(padRight(r.pin, wp)),
-			s.Dim.Render(r.age),
+			s.Label.Render(padRight(r.Type.String(), wt)),
+			s.Dim.Render(padRight(refs[i], wr)),
+			s.Value.Render(padRight(r.Pin.String(), wp)),
+			s.Dim.Render(RelAge(r.LastModified, now)),
 		)
-		b.WriteString(strings.TrimRight(line, " ") + "\n")
+		b.WriteString(strings.TrimRight(line, " ") + noteSuffix(s, r.Note) + "\n")
 	}
 	return b.String()
 }
 
 // RenderResults renders the outcome of an update: one line per input, glyph-led.
-func RenderResults(s Styles, results []flake.UpdateResult, now int64) string {
+func RenderResults(s Styles, results []ResultRow, now int64) string {
 	var wn int
 	for _, r := range results {
-		wn = max(wn, utf8.RuneCountInString(r.Input))
+		wn = max(wn, utf8.RuneCountInString(r.Input.String()))
 	}
 	var b strings.Builder
 	for _, r := range results {
@@ -166,31 +171,31 @@ func RenderResults(s Styles, results []flake.UpdateResult, now int64) string {
 // terminated; nameWidth aligns the input column across rows (pass the widest
 // name of the batch). It is the unit the streaming updater prints as each
 // input's lock write lands.
-func RenderResultRow(s Styles, r flake.UpdateResult, nameWidth int, now int64) string {
-	name := padRight(r.Input, nameWidth)
+func RenderResultRow(s Styles, r ResultRow, nameWidth int, now int64) string {
+	name := padRight(r.Input.String(), nameWidth)
 	if r.Unchanged {
 		return fmt.Sprintf("  %s %s  %s  %s\n",
 			s.Dim.Render(GlyphUnchanged), s.Value.Render(name),
 			s.Dim.Render("already current"),
-			s.Dim.Render(ShortPin(r.OldPin)+"  ("+RelAge(r.OldMod, now)+")"))
+			s.Dim.Render(r.OldPin.String()+"  ("+RelAge(r.OldMod, now)+")"))
 	}
 	return fmt.Sprintf("  %s %s  %s %s %s  %s\n",
 		s.Good.Render(GlyphMoved), s.Value.Render(name),
-		s.Value.Render(ShortPin(r.OldPin)), s.Dim.Render(GlyphArrow), s.Good.Render(ShortPin(r.NewPin)),
+		s.Value.Render(r.OldPin.String()), s.Dim.Render(GlyphArrow), s.Good.Render(r.NewPin.String()),
 		s.Dim.Render("("+RelAge(r.OldMod, now)+" "+GlyphArrow+" "+RelAge(r.NewMod, now)+")"))
 }
 
 // RenderUpdatingText renders the transient "name  updating…" label the
 // streaming updater animates behind the spinner glyph; nameWidth keeps it
 // column-aligned with the result row that will replace it.
-func RenderUpdatingText(s Styles, name string, nameWidth int) string {
-	return fmt.Sprintf("%s  %s", s.Value.Render(padRight(name, nameWidth)), s.Dim.Render("updating…"))
+func RenderUpdatingText(s Styles, name termsafe.Text, nameWidth int) string {
+	return fmt.Sprintf("%s  %s", s.Value.Render(padRight(name.String(), nameWidth)), s.Dim.Render("updating…"))
 }
 
 // RenderFailedRow marks the input whose `nix flake update` failed mid-run, so
 // the streamed list accounts for every input that was attempted.
-func RenderFailedRow(s Styles, name string, nameWidth int) string {
+func RenderFailedRow(s Styles, name termsafe.Text, nameWidth int) string {
 	return fmt.Sprintf("  %s %s  %s\n",
-		s.Bad.Render(GlyphError), s.Value.Render(padRight(name, nameWidth)),
+		s.Bad.Render(GlyphError), s.Value.Render(padRight(name.String(), nameWidth)),
 		s.Bad.Render("update failed"))
 }

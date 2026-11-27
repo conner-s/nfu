@@ -50,7 +50,7 @@ func Run(ctx context.Context, client *flake.Client, plan Plan, s ui.Styles) (Res
 	}
 	ui.Fprint(os.Stdout, ui.RenderResults(s, ui.ResultRows(results), time.Now().Unix()))
 
-	committed, msg, warn := lock.Commit(ctx, root, results, plan.Commit)
+	committed, msg, warn := lock.Commit(ctx, root, results, plan.Commit, plan.Trailers...)
 	res.Committed, res.CommitMsg, res.Warn = committed, msg, warn
 	if committed {
 		ui.Fprintf(os.Stdout, "%s %s\n", s.Good.Render("committed flake.lock:"), s.Dim.Render(ui.Line(msg).String()))
@@ -72,14 +72,33 @@ func Run(ctx context.Context, client *flake.Client, plan Plan, s ui.Styles) (Res
 	}
 
 	// 3. Deploy each remote host in order.
-	for i, h := range plan.Hosts {
-		ui.Fprint(os.Stdout, stepHeader(s, "deploy", shown.Deploys[i]))
+	deployed, err := Deploy(ctx, root, plan.Hosts, s)
+	res.Deployed = deployed
+	return res, err
+}
+
+// Deploy runs `deploy` for each host in order from the flake root, stopping at
+// the first failure. It returns the hosts that deployed.
+func Deploy(ctx context.Context, root string, hosts []HostStep, s ui.Styles) ([]string, error) {
+	var deployed []string
+	for _, h := range hosts {
+		ui.Fprint(os.Stdout, stepHeader(s, "deploy", ui.Names(h.Argv(), " ")))
 		if err := proc.Stream(ctx, root, "deploy", h.Argv()...); err != nil {
-			return res, err
+			return deployed, err
 		}
-		res.Deployed = append(res.Deployed, h.Name)
+		deployed = append(deployed, h.Name)
 	}
-	return res, nil
+	return deployed, nil
+}
+
+// HostSteps resolves bare host names through the shared catalog; an unknown
+// name deploys bare, as it does inside a project.
+func HostSteps(c *Catalog, names []string) []HostStep {
+	steps := make([]HostStep, 0, len(names))
+	for _, n := range names {
+		steps = append(steps, HostStep{Name: n, Args: c.hosts[n].DeployArgs})
+	}
+	return steps
 }
 
 // stepHeader is the "→ verb detail" banner printed before each pipeline step.

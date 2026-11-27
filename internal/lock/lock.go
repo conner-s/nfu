@@ -49,7 +49,8 @@ func Message(results []flake.UpdateResult) string {
 // Commit commits flake.lock when enabled and something actually moved. A missing
 // repo or a commit failure is non-fatal — the update already succeeded — and is
 // reported via warn rather than an error, so callers surface it without failing.
-func Commit(ctx context.Context, root string, results []flake.UpdateResult, enabled bool) (committed bool, msg, warn string) {
+// trailers ("Key: value" lines) close the commit body; msg stays the subject.
+func Commit(ctx context.Context, root string, results []flake.UpdateResult, enabled bool, trailers ...string) (committed bool, msg, warn string) {
 	if !enabled || !AnyMoved(results) {
 		return false, "", ""
 	}
@@ -64,8 +65,16 @@ func Commit(ctx context.Context, root string, results []flake.UpdateResult, enab
 		return false, "", ""
 	}
 	msg = Message(results)
-	if err := git.CommitLock(ctx, root, msg); err != nil {
+	if err := git.CommitLock(ctx, root, WithTrailers(msg, trailers)); err != nil {
 		return false, "", "commit failed: " + err.Error()
 	}
 	return true, msg, ""
+}
+
+// WithTrailers appends trailer lines to a commit subject as git's trailer block.
+func WithTrailers(subject string, trailers []string) string {
+	if len(trailers) == 0 {
+		return subject
+	}
+	return subject + "\n\n" + strings.Join(trailers, "\n")
 }

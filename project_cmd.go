@@ -146,6 +146,7 @@ func runProjectRun(ctx context.Context, g globalFlags, names []string) error {
 
 	for _, p := range plans {
 		start := time.Now()
+		p.Trailers = g.trailers
 		res, err := project.Run(ctx, client, p, s)
 		// Record the outcome either way — the manager TUI and future lists show
 		// "last run · status" from this history. Best-effort, never fatal.

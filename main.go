@@ -51,11 +51,15 @@ usage:
   nfu project remove <name>   delete a project
   nfu project list            show configured projects
 
+  nfu deploy <host>…          deploy hosts with their configured deploy args,
+                              updating nothing first
+
 flags:
   -f, --flake PATH   flake directory (overrides config and $NFU_FLAKE)
       --config PATH  config file (default: ~/.config/nfu/config.toml)
   -c, --commit       git-commit flake.lock after a successful update
       --no-commit    never commit, even if the config enables it
+      --trailer T    add a "Key: value" trailer to that commit (repeatable)
   -n, --dry-run      show what would change; write nothing
   -y, --yes          skip the project-run confirmation prompt
   -m, --merge        project run: fold the named projects into one pipeline
@@ -79,7 +83,7 @@ project add / edit:
   terminal both open the TUI — edit pre-filled — and offer to git-commit the
   project file afterwards (-y commits without asking, --no-commit skips it).
 
-note: all / list / ls / update / project / help are reserved as the first word.
+note: all / list / ls / update / project / deploy / help are reserved as the first word.
 To update an input literally named one of those, use ` + "`nfu update <name>`" + `.
 `
 
@@ -105,6 +109,8 @@ type globalFlags struct {
 	localSwitch   bool
 	noLocalSwitch bool
 	print         bool
+
+	trailers stringList
 }
 
 // stringList is a repeatable string flag (e.g. --host-args used more than once).
@@ -120,6 +126,7 @@ func addFlags(fs *flag.FlagSet, g *globalFlags) {
 	fs.BoolVar(&g.commit, "commit", false, "commit flake.lock after update")
 	fs.BoolVar(&g.commit, "c", false, "commit (shorthand)")
 	fs.BoolVar(&g.noCommit, "no-commit", false, "do not commit")
+	fs.Var(&g.trailers, "trailer", "'Key: value' trailer for the flake.lock commit (repeatable)")
 	fs.BoolVar(&g.dryRun, "dry-run", false, "write nothing")
 	fs.BoolVar(&g.dryRun, "n", false, "dry-run (shorthand)")
 	fs.BoolVar(&g.asJSON, "json", false, "machine-readable JSON")
@@ -256,10 +263,13 @@ func warnArgs(w io.Writer, g globalFlags, positionals []string) {
 	for _, v := range g.hostArgs {
 		warn("The value of --host-args", v)
 	}
+	for _, v := range g.trailers {
+		warn("The value of --trailer", v)
+	}
 }
 
 // dispatch routes positionals to a command. The reserved first words
-// `list`/`ls`, `all`, `update`, and `help` are commands; anything else is
+// `list`/`ls`, `all`, `update`, `project`, `deploy`, and `help` are commands; anything else is
 // treated as input names to update. `nfu update <name…>` is the explicit escape
 // hatch for updating an input whose name collides with a reserved word. With no
 // positionals it opens the interactive picker (or lists, when stdout is not a
@@ -287,6 +297,8 @@ func dispatch(ctx context.Context, g globalFlags, positionals []string) error {
 		return runUpdate(ctx, g, names)
 	case "project":
 		return runProject(ctx, g, positionals[1:])
+	case "deploy":
+		return runDeploy(ctx, g, positionals[1:])
 	default:
 		return runUpdate(ctx, g, positionals)
 	}

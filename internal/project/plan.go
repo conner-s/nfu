@@ -30,6 +30,9 @@ type Plan struct {
 	LocalSwitch bool
 	Hosts       []HostStep
 
+	// Trailers close the flake.lock commit message ("Key: value" lines).
+	Trailers []string
+
 	// Members names the projects this plan came from when it is more than one —
 	// a bundle's `includes`, or the projects a --merge run folded together. Empty
 	// for a plain single project, so the preview only explains itself when there

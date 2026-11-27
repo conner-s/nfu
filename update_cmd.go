@@ -98,7 +98,7 @@ func streamUpdate(ctx context.Context, g globalFlags, cfg *config.Config, client
 	if results == nil && updErr != nil {
 		return updErr // nothing ran (e.g. unknown input): report and stop
 	}
-	committed, commitMsg, warn := lock.Commit(ctx, client.Root(), results, commitEnabled(g, cfg))
+	committed, commitMsg, warn := lock.Commit(ctx, client.Root(), results, commitEnabled(g, cfg), g.trailers...)
 	emitFooter(os.Stdout, os.Stderr, s, results, committed, ui.Line(commitMsg), ui.Line(warn), updErr)
 	return updErr
 }
@@ -152,7 +152,7 @@ func (r *streamReporter) finish(failed bool) {
 // propagating a non-fatal update error (a later input failing after earlier
 // ones moved).
 func finishJSON(ctx context.Context, g globalFlags, cfg *config.Config, client *flake.Client, results []flake.UpdateResult, updErr error) error {
-	committed, commitMsg, warn := lock.Commit(ctx, client.Root(), results, commitEnabled(g, cfg))
+	committed, commitMsg, warn := lock.Commit(ctx, client.Root(), results, commitEnabled(g, cfg), g.trailers...)
 	emitJSON(client.Root(), results, committed, commitMsg, warn, updErr)
 	return updErr
 }

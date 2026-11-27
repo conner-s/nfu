@@ -16,7 +16,7 @@ nfu update <name>   explicit update verb (escape hatch for a reserved name)
 nfu @workstation    update every input a project bundle covers
 ```
 
-`all`, `list`, `ls`, `update`, and `help` are reserved as the first word; to
+`all`, `list`, `ls`, `update`, `project`, `deploy`, and `help` are reserved as the first word; to
 update an input literally named one of those, use `nfu update <name>`. A `follows`
 alias has no independent lock, so `nfu <alias>` tells you which input to update
 instead.
@@ -116,6 +116,10 @@ commits **only** `flake.lock` — never other working-tree changes — and never
 pushes. Set `commit = true` in the config to make it the default (and
 `--no-commit` to opt out per run). If the flake root isn't a git repo, the
 update still succeeds and the commit is skipped with a warning.
+
+`--trailer "Key: value"` (repeatable) ends that commit message with a git
+trailer, e.g. `--trailer "T3-Thread: <id>"` to name the work the bump ships.
+It applies to `nfu project run` too.
 
 ## Browse & pick: bare `nfu`
 
@@ -314,6 +318,9 @@ deployArgs = ["--magic-rollback", "false"]
 
 [hosts.Servitor]         # no deployArgs → bare `deploy .#Servitor`
 ```
+
+`nfu deploy Fabricator Servitor` runs just that step: each host in order, with
+its `deployArgs`, from the flake root, updating nothing first.
 
 ### Where projects live
 
